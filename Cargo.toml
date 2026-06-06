@@ -58,6 +58,10 @@ ssr = [
     "leptos_router/ssr",
 ]
 
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
 [package.metadata.leptos]
 output-name = "lanes"
 site-root = "target/site"
