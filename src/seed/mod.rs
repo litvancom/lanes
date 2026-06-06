@@ -100,7 +100,6 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
     let list_names = ["Inbox", "This week", "In progress", "Done"];
     let mut list_ids: Vec<String> = Vec::with_capacity(4);
     let mut prev_pos = FractionalIndex::default();
-    let mut list_positions: Vec<String> = Vec::with_capacity(4);
 
     for (i, name) in list_names.iter().enumerate() {
         let list_id = Uuid::now_v7().to_string();
@@ -121,7 +120,6 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
         .execute(&mut *tx)
         .await?;
 
-        list_positions.push(pos_str);
         prev_pos = pos;
         list_ids.push(list_id);
     }
