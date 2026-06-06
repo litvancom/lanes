@@ -4,7 +4,7 @@
 #[cfg(feature = "ssr")]
 mod invite_tests {
     use lanes::server::db::{init_pools, run_migrations};
-    use lanes::api::invite_api::{generate_invite_token, create_invite};
+    use lanes::api::invite_api::{generate_invite_token, create_invite, consume_invite};
     use tempfile::NamedTempFile;
 
     /// Create a temp DB with migrations applied; return (file guard, write_pool, read_pool).
@@ -162,5 +162,172 @@ mod invite_tests {
         .await
         .expect("count");
         assert_eq!(count, 2, "re-invite should create a second row");
+    }
+
+    // -------------------------------------------------------------------------
+    // consume_invite tests (Task 1 — Plan 04)
+    // -------------------------------------------------------------------------
+
+    fn now_ms() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64
+    }
+
+    /// Helper: insert a second user (the invitee).
+    async fn insert_invitee(pool: &sqlx::SqlitePool, email: &str) -> String {
+        insert_user_direct(pool, email).await
+    }
+
+    /// Test: consume_invite succeeds for a valid unused unexpired invite whose email matches
+    /// user_email — marks accepted=1, inserts board_members row, returns board_id.
+    #[tokio::test]
+    async fn test_consume_invite_success() {
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        let owner_id = insert_user_direct(&write_pool, "owner@test.com").await;
+        let board_id = insert_board_with_owner(&write_pool, "Board", &owner_id).await;
+        let invitee_id = insert_invitee(&write_pool, "alice@test.com").await;
+
+        let now = now_ms();
+        let token = create_invite(&write_pool, &board_id, &owner_id, "Alice@Test.com", now)
+            .await
+            .expect("create_invite");
+
+        // consume_invite with matching email (case-insensitive)
+        let result = consume_invite(&write_pool, &token, &invitee_id, "alice@test.com", now + 1000)
+            .await;
+        assert!(result.is_ok(), "consume_invite should succeed: {:?}", result);
+        assert_eq!(result.unwrap(), board_id, "should return the board_id");
+
+        // invite row must be accepted
+        let accepted: i64 = sqlx::query_scalar!(
+            "SELECT accepted FROM invites WHERE token = ?", token
+        )
+        .fetch_one(&write_pool)
+        .await
+        .expect("fetch invite");
+        assert_eq!(accepted, 1, "invite must be marked accepted");
+
+        // board_members row must exist
+        let member_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM board_members WHERE board_id = ? AND user_id = ?"
+        )
+        .bind(&board_id)
+        .bind(&invitee_id)
+        .fetch_one(&write_pool)
+        .await
+        .expect("member count");
+        assert_eq!(member_count, 1, "invitee must be inserted into board_members");
+    }
+
+    /// Test: mismatched email (D-15 strict binding) returns WrongEmail error,
+    /// NO board_members row, accepted remains 0.
+    #[tokio::test]
+    async fn test_consume_invite_wrong_email() {
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        let owner_id = insert_user_direct(&write_pool, "owner@test.com").await;
+        let board_id = insert_board_with_owner(&write_pool, "Board", &owner_id).await;
+        let attacker_id = insert_invitee(&write_pool, "attacker@test.com").await;
+
+        let now = now_ms();
+        let token = create_invite(&write_pool, &board_id, &owner_id, "alice@test.com", now)
+            .await
+            .expect("create_invite");
+
+        // Different email — should be rejected
+        let result = consume_invite(&write_pool, &token, &attacker_id, "attacker@test.com", now + 1000)
+            .await;
+        assert!(result.is_err(), "consume_invite should fail for mismatched email");
+
+        // accepted must still be 0
+        let accepted: i64 = sqlx::query_scalar!(
+            "SELECT accepted FROM invites WHERE token = ?", token
+        )
+        .fetch_one(&write_pool)
+        .await
+        .expect("fetch invite");
+        assert_eq!(accepted, 0, "accepted must remain 0 on wrong-email rejection");
+
+        // no board_members row for the attacker
+        let member_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM board_members WHERE board_id = ? AND user_id = ?"
+        )
+        .bind(&board_id)
+        .bind(&attacker_id)
+        .fetch_one(&write_pool)
+        .await
+        .expect("member count");
+        assert_eq!(member_count, 0, "attacker must NOT be added to board_members");
+    }
+
+    /// Test: expired invite (expires_at < now) returns Expired error, no membership.
+    #[tokio::test]
+    async fn test_consume_invite_expired() {
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        let owner_id = insert_user_direct(&write_pool, "owner@test.com").await;
+        let board_id = insert_board_with_owner(&write_pool, "Board", &owner_id).await;
+        let invitee_id = insert_invitee(&write_pool, "bob@test.com").await;
+
+        // Create invite in the past (already expired)
+        let past = now_ms() - 10 * 24 * 3600 * 1000; // 10 days ago
+        let token = create_invite(&write_pool, &board_id, &owner_id, "bob@test.com", past)
+            .await
+            .expect("create_invite");
+
+        // now_ms() is well past expires_at (past + 7 days)
+        let result = consume_invite(&write_pool, &token, &invitee_id, "bob@test.com", now_ms())
+            .await;
+        assert!(result.is_err(), "consume_invite should fail for expired invite");
+
+        // no board_members row
+        let member_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM board_members WHERE board_id = ? AND user_id = ?"
+        )
+        .bind(&board_id)
+        .bind(&invitee_id)
+        .fetch_one(&write_pool)
+        .await
+        .expect("member count");
+        assert_eq!(member_count, 0, "expired invite must not grant membership");
+    }
+
+    /// Test: already-accepted invite returns AlreadyUsed error, does not duplicate membership.
+    #[tokio::test]
+    async fn test_consume_invite_already_used() {
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        let owner_id = insert_user_direct(&write_pool, "owner@test.com").await;
+        let board_id = insert_board_with_owner(&write_pool, "Board", &owner_id).await;
+        let invitee_id = insert_invitee(&write_pool, "carol@test.com").await;
+
+        let now = now_ms();
+        let token = create_invite(&write_pool, &board_id, &owner_id, "carol@test.com", now)
+            .await
+            .expect("create_invite");
+
+        // First consumption succeeds
+        let first = consume_invite(&write_pool, &token, &invitee_id, "carol@test.com", now + 1000)
+            .await;
+        assert!(first.is_ok(), "first consumption must succeed");
+
+        // Second consumption must fail
+        let second = consume_invite(&write_pool, &token, &invitee_id, "carol@test.com", now + 2000)
+            .await;
+        assert!(second.is_err(), "second consumption must fail (already used)");
+
+        // Exactly one board_members row (no duplicate)
+        let member_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM board_members WHERE board_id = ? AND user_id = ?"
+        )
+        .bind(&board_id)
+        .bind(&invitee_id)
+        .fetch_one(&write_pool)
+        .await
+        .expect("member count");
+        assert_eq!(member_count, 1, "must not duplicate board_members on double-accept");
     }
 }
