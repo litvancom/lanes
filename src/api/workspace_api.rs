@@ -43,7 +43,15 @@ pub async fn create_board(pool: &sqlx::SqlitePool, name: String) -> Result<Board
         .take(6)
         .collect::<String>();
 
+    // Color is hardcoded today; validate at the write boundary so an invalid
+    // color can never reach the DB once this becomes user-controlled (CR-01).
     let color = "#6366f1".to_string();
+    if !(color.len() == 7
+        && color.starts_with('#')
+        && color[1..].chars().all(|ch| ch.is_ascii_hexdigit()))
+    {
+        return Err("Board color must be a 6-digit hex value (#rrggbb)".into());
+    }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
