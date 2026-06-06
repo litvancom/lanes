@@ -17,6 +17,19 @@ pub async fn fetch_boards(pool: &sqlx::SqlitePool) -> Result<Vec<Board>, sqlx::E
     .await
 }
 
+/// Derive a board key prefix from its name: first whitespace-delimited word,
+/// uppercased, first 6 chars. Single source of truth shared by production and
+/// test code (WR-05).
+pub fn derive_key_prefix(name: &str) -> String {
+    name.split_whitespace()
+        .next()
+        .unwrap_or("BOARD")
+        .to_uppercase()
+        .chars()
+        .take(6)
+        .collect::<String>()
+}
+
 /// Internal: validate name and insert a new board. Returns the created Board.
 /// Validation: trim, reject empty, reject > 120 chars (T-03-01, ASVS V5).
 /// Uses parameterized INSERT only — no format! into SQL.
@@ -34,14 +47,7 @@ pub async fn create_board(pool: &sqlx::SqlitePool, name: String) -> Result<Board
 
     let id = Uuid::now_v7().to_string();
 
-    let key_prefix = name
-        .split_whitespace()
-        .next()
-        .unwrap_or("BOARD")
-        .to_uppercase()
-        .chars()
-        .take(6)
-        .collect::<String>();
+    let key_prefix = derive_key_prefix(&name);
 
     // Color is hardcoded today; validate at the write boundary so an invalid
     // color can never reach the DB once this becomes user-controlled (CR-01).

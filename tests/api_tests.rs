@@ -4,7 +4,7 @@
 #[cfg(feature = "ssr")]
 mod api_tests {
     use lanes::server::db::{init_pools, run_migrations};
-    use lanes::api::workspace_api::{create_board, fetch_boards};
+    use lanes::api::workspace_api::{create_board, derive_key_prefix, fetch_boards};
     use tempfile::NamedTempFile;
 
     /// Create a temp DB with migrations applied; return (file guard, write_pool, read_pool).
@@ -22,14 +22,7 @@ mod api_tests {
     async fn insert_board_direct(pool: &sqlx::SqlitePool, name: &str, archived: bool) -> String {
         use uuid::Uuid;
         let id = Uuid::now_v7().to_string();
-        let key_prefix = name
-            .split_whitespace()
-            .next()
-            .unwrap_or("BOARD")
-            .to_uppercase()
-            .chars()
-            .take(6)
-            .collect::<String>();
+        let key_prefix = derive_key_prefix(name);
         let color = "#6366f1".to_string();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
