@@ -1,6 +1,9 @@
 #[cfg(feature = "ssr")]
 #[tokio::main]
 async fn main() {
+    use clap::Parser;
+    use lanes::cli::{Cli, Commands};
+
     // Load .env first (D-06)
     dotenvy::dotenv().ok();
 
@@ -12,7 +15,37 @@ async fn main() {
         )
         .init();
 
-    start_server().await;
+    let cli = Cli::parse();
+
+    match cli.command {
+        Some(Commands::Seed) => {
+            use lanes::server::{
+                config::Config,
+                db::{make_write_pool, run_migrations},
+            };
+
+            let config = Config::from_env().expect("Failed to load config");
+            config.ensure_data_dir().expect("Failed to create data directory");
+
+            let write_pool = make_write_pool(&config.database_url)
+                .await
+                .expect("Failed to create write pool");
+
+            // run_migrations before run_seed (D-08 ordering)
+            run_migrations(&write_pool)
+                .await
+                .expect("Failed to run database migrations");
+
+            lanes::seed::run_seed(&write_pool)
+                .await
+                .expect("Seed failed");
+
+            println!("Seed complete.");
+        }
+        None => {
+            start_server().await;
+        }
+    }
 }
 
 #[cfg(feature = "ssr")]
