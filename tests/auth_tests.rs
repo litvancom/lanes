@@ -181,6 +181,124 @@ mod auth_tests {
     }
 }
 
+/// Task 1 (Plan 02) tests: seed Mira with real password + reset_password behaviors.
+#[cfg(feature = "ssr")]
+mod seed_auth_tests {
+    use lanes::server::db::{init_pools, run_migrations};
+    use lanes::auth::backend::EmailPasswordBackend;
+    use lanes::auth::models::LoginCredentials;
+    use lanes::seed::run_seed;
+    use axum_login::AuthnBackend;
+    use tempfile::NamedTempFile;
+
+    async fn test_db() -> (NamedTempFile, sqlx::SqlitePool, sqlx::SqlitePool) {
+        let file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_str().expect("path").to_string();
+        let url = format!("sqlite://{}", path);
+        let (write_pool, read_pool) = init_pools(&url).await.expect("init pools");
+        run_migrations(&write_pool).await.expect("migrations");
+        (file, write_pool, read_pool)
+    }
+
+    /// Test: after seeding, mira@example.com authenticates with password "lanes-demo" (D-10).
+    #[tokio::test]
+    async fn test_mira_authenticates_after_seed() {
+        let (_file, write_pool, read_pool) = test_db().await;
+
+        run_seed(&write_pool).await.expect("seed should succeed");
+
+        let backend = EmailPasswordBackend::new(write_pool.clone(), read_pool.clone());
+        let creds = LoginCredentials {
+            email: "mira@example.com".to_string(),
+            password: "lanes-demo".to_string(),
+        };
+        let result = backend.authenticate(creds).await.expect("authenticate should not error");
+        assert!(result.is_some(), "mira@example.com should authenticate with lanes-demo");
+        let user = result.unwrap();
+        assert_eq!(user.email, "mira@example.com");
+    }
+
+    /// Test: wrong password fails for Mira post-seed (D-10).
+    #[tokio::test]
+    async fn test_mira_wrong_password_fails_after_seed() {
+        let (_file, write_pool, read_pool) = test_db().await;
+
+        run_seed(&write_pool).await.expect("seed should succeed");
+
+        let backend = EmailPasswordBackend::new(write_pool.clone(), read_pool.clone());
+        let creds = LoginCredentials {
+            email: "mira@example.com".to_string(),
+            password: "wrong-password".to_string(),
+        };
+        let result = backend.authenticate(creds).await.expect("authenticate should not error");
+        assert!(result.is_none(), "wrong password should return None");
+    }
+
+    /// Test: reset_password rotates hash; old password no longer works, new one does (D-20).
+    #[tokio::test]
+    async fn test_reset_password_rotates_hash() {
+        let (_file, write_pool, read_pool) = test_db().await;
+
+        run_seed(&write_pool).await.expect("seed should succeed");
+
+        // Rotate the password
+        lanes::seed::reset_password(&write_pool, "mira@example.com", "new-password-123")
+            .await
+            .expect("reset_password should succeed");
+
+        let backend = EmailPasswordBackend::new(write_pool.clone(), read_pool.clone());
+
+        // Old password should fail
+        let old_creds = LoginCredentials {
+            email: "mira@example.com".to_string(),
+            password: "lanes-demo".to_string(),
+        };
+        let old_result = backend.authenticate(old_creds).await.expect("no error");
+        assert!(old_result.is_none(), "old password should no longer work after reset");
+
+        // New password should succeed
+        let new_creds = LoginCredentials {
+            email: "mira@example.com".to_string(),
+            password: "new-password-123".to_string(),
+        };
+        let new_result = backend.authenticate(new_creds).await.expect("no error");
+        assert!(new_result.is_some(), "new password should authenticate after reset");
+    }
+
+    /// Test: reset_password rejects passwords shorter than 8 chars (D-20).
+    #[tokio::test]
+    async fn test_reset_password_rejects_short_password() {
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        run_seed(&write_pool).await.expect("seed should succeed");
+
+        let result = lanes::seed::reset_password(&write_pool, "mira@example.com", "short7!")
+            .await;
+        assert!(result.is_err(), "short password should be rejected");
+        let err = result.unwrap_err();
+        assert!(err.contains("8"), "error should mention 8 characters: {}", err);
+    }
+
+    /// Test: reset_password returns error when email not found (D-20).
+    #[tokio::test]
+    async fn test_reset_password_unknown_email_returns_error() {
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        run_seed(&write_pool).await.expect("seed should succeed");
+
+        let result = lanes::seed::reset_password(
+            &write_pool,
+            "nobody@example.com",
+            "validpass123",
+        )
+        .await;
+        assert!(result.is_err(), "unknown email should return error");
+        let err = result.unwrap_err();
+        assert!(err.contains("not found") || err.contains("No user"),
+            "error should indicate user not found: {}", err);
+    }
+}
+
 /// Task 3 tests: create_user() inner function behaviors (AUTH-01, D-17, D-18).
 #[cfg(feature = "ssr")]
 mod signup_tests {
