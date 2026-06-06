@@ -50,15 +50,24 @@ async fn main() {
 
 #[cfg(feature = "ssr")]
 async fn start_server() {
+    use std::sync::Arc;
     use lanes::server::{
         config::Config,
         db::{init_pools, run_migrations},
         state::{AppState, ReadPool, WritePool},
     };
     use lanes::app::App;
+    use lanes::auth::backend::EmailPasswordBackend;
+    use lanes::mailer::console::ConsoleMailer;
+    use lanes::mailer::Mailer;
     use axum::Router;
     use leptos::config::get_configuration;
     use leptos_axum::{generate_route_list, LeptosRoutes};
+    use tower_sessions::{Expiry, SessionManagerLayer};
+    use tower_sessions::cookie::SameSite;
+    use tower_sessions_sqlx_store::SqliteStore;
+    use axum_login::AuthManagerLayerBuilder;
+    use time::Duration;
 
     let config = Config::from_env().expect("Failed to load config");
 
@@ -75,6 +84,29 @@ async fn start_server() {
         .await
         .expect("Failed to run database migrations");
 
+    // --- Session + auth middleware wiring (RESEARCH Pattern 1) ---
+
+    // tower-sessions SQLite store: creates 'tower_sessions' table at startup (Pitfall 3)
+    // The hand-rolled `sessions` table was dropped in migration 002_auth.sql
+    let session_store = SqliteStore::new(write_pool.clone());
+    session_store
+        .migrate()
+        .await
+        .expect("Failed to migrate session store");
+
+    // 30-day sliding session (D-06); SameSite=Lax so invite GET links work (not Strict, anti-pattern note)
+    let session_layer = SessionManagerLayer::new(session_store)
+        .with_secure(true)        // T-02-04: HttpOnly + Secure
+        .with_http_only(true)
+        .with_same_site(SameSite::Lax) // T-02-05: Lax allows GET from email links; mutations are POST
+        .with_expiry(Expiry::OnInactivity(Duration::days(30))); // D-06: sliding 30-day
+
+    let backend = EmailPasswordBackend::new(write_pool.clone(), read_pool.clone());
+    let auth_layer = AuthManagerLayerBuilder::new(backend, session_layer).build();
+
+    // Console mailer (D-13 floor); SMTP deferred to Phase 7
+    let mailer: Arc<dyn Mailer> = Arc::new(ConsoleMailer);
+
     let conf = get_configuration(None).unwrap();
     let leptos_options = conf.leptos_options;
     let addr = leptos_options.site_addr;
@@ -84,6 +116,7 @@ async fn start_server() {
         leptos_options: leptos_options.clone(),
         write_pool: WritePool(write_pool),
         read_pool: ReadPool(read_pool),
+        mailer,
     };
 
     let app = Router::new()
@@ -122,6 +155,7 @@ async fn start_server() {
                 </html>
             }
         }))
+        .layer(auth_layer) // MUST be before .with_state() (RESEARCH Pattern 1)
         .with_state(app_state);
 
     tracing::info!("Listening on http://{}", addr);

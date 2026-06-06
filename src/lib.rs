@@ -3,6 +3,7 @@ pub mod models;
 pub mod routes;
 pub mod components;
 pub mod api;
+pub mod auth;
 
 #[cfg(feature = "ssr")]
 pub mod server;
@@ -12,6 +13,9 @@ pub mod cli;
 
 #[cfg(feature = "ssr")]
 pub mod seed;
+
+#[cfg(feature = "ssr")]
+pub mod mailer;
 
 #[cfg(feature = "hydrate")]
 #[wasm_bindgen::prelude::wasm_bindgen]
