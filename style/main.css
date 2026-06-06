@@ -1,0 +1,22 @@
+/* Lanes — design tokens and base styles */
+/* Populated with design system in plan 03 */
+
+:root {
+    --color-primary: #7c5cff;
+    --color-bg: #0f0f13;
+    --color-surface: #1a1a24;
+    --color-text: #f0eff5;
+    --font-sans: 'Manrope', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+}
+
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: var(--font-sans);
+    background: var(--color-bg);
+    color: var(--color-text);
+}
