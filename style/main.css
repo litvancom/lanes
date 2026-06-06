@@ -111,8 +111,8 @@ input, textarea {
 }
 
 .board-card-header {
-  height: 36px;
-  background: var(--accent);
+  height: 60px;
+  /* background set inline via board color gradient */
 }
 
 .board-card-body {
