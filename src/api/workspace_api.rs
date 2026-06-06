@@ -58,10 +58,8 @@ pub async fn create_board(pool: &sqlx::SqlitePool, name: String) -> Result<Board
     {
         return Err("Board color must be a 6-digit hex value (#rrggbb)".into());
     }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64;
+    // Surface a clock error rather than silently writing 0 (WR-03).
+    let now = crate::server::now_millis().map_err(|e| format!("Clock error: {e}"))?;
 
     // Parameterized INSERT — no format! into SQL (T-03-01 Tampering mitigation)
     sqlx::query!(
