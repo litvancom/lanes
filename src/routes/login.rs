@@ -1,5 +1,6 @@
 use leptos::prelude::*;
 use leptos::form::ActionForm;
+use leptos_router::hooks::{use_navigate, use_query_map};
 use crate::api::auth_api::Login;
 use crate::components::logo::LogoMark;
 use crate::components::checkbox::CustomCheckbox;
@@ -13,9 +14,32 @@ use crate::components::checkbox::CustomCheckbox;
 /// Wired to ServerAction::<Login> via ActionForm.
 /// Generic error "Invalid email or password." rendered via aria-live banner (D-18, T-02-08).
 /// "or continue with" divider + OAuth buttons hidden with display:none when no providers configured (D-08).
+///
+/// # Return-to flow (D-12, T-02-23)
+/// If a `?return=/invite/...` query param is present, successful login navigates client-side
+/// to that path instead of the default workspace. SECURITY: only relative paths beginning with
+/// a single `/` (not `//` and not containing a URL scheme) are honored; all others fall back to `/`.
 #[component]
 pub fn LoginPage() -> impl IntoView {
     let login_action = ServerAction::<Login>::new();
+    let navigate = use_navigate();
+    let query = use_query_map();
+
+    // Extract and sanitize the ?return= query param (T-02-23 — open redirect prevention)
+    // Only relative paths beginning with a single `/` (not `//` and no scheme) are honored.
+    let return_path = move || {
+        let q = query.read();
+        let raw = q.get("return").unwrap_or_default();
+        sanitize_return_path(&raw)
+    };
+
+    // On successful login: navigate to sanitized return-to path (or default workspace)
+    Effect::new(move |_| {
+        if let Some(Ok(_)) = login_action.value().get() {
+            let dest = return_path();
+            navigate(&dest, Default::default());
+        }
+    });
 
     // Derive the generic error message from the action result (D-18)
     // Both wrong password and unknown email produce the same message
@@ -198,5 +222,21 @@ pub fn LoginPage() -> impl IntoView {
                 </div>
             </div>
         </div>
+    }
+}
+
+/// Sanitize a login `return` redirect target (T-02-23 — open redirect prevention).
+///
+/// Only permits relative paths that:
+/// - Begin with exactly one `/`
+/// - Do NOT begin with `//` (which browsers treat as protocol-relative and may redirect off-domain)
+/// - Do NOT contain `:` before the first `/` (no URL schemes like `http:`)
+///
+/// Anything else defaults to `/` (workspace root).
+fn sanitize_return_path(raw: &str) -> String {
+    if raw.starts_with('/') && !raw.starts_with("//") && !raw.contains(':') {
+        raw.to_string()
+    } else {
+        "/".to_string()
     }
 }

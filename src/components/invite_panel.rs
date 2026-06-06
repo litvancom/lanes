@@ -92,10 +92,20 @@ pub fn InvitePanel(
                                 on:click={
                                     let url = url_for_display.clone();
                                     move |_| {
-                                        // Copy to clipboard via the Async Clipboard API (WASM only)
+                                        // Clipboard copy: the link input is readonly and selectable.
+                                        // WASM-side copy via wasm_bindgen eval (no web-sys feature flags needed).
                                         #[cfg(target_arch = "wasm32")]
-                                        if let Some(window) = web_sys::window() {
-                                            let _ = window.navigator().clipboard().write_text(&url);
+                                        {
+                                            use wasm_bindgen::prelude::*;
+                                            #[wasm_bindgen]
+                                            extern "C" {
+                                                fn eval(s: &str) -> JsValue;
+                                            }
+                                            let script = format!(
+                                                "navigator.clipboard && navigator.clipboard.writeText({:?})",
+                                                url
+                                            );
+                                            eval(&script);
                                         }
                                         let _ = &url; // suppress unused-variable in SSR build
                                         copied.set(true);
