@@ -1,4 +1,7 @@
-//! Tests for the 16-table v1 schema via PRAGMA introspection
+//! Tests for the v1 schema via PRAGMA introspection.
+//! Phase 1 had 16 tables including `sessions`.
+//! Phase 2 migration 002 drops `sessions` (replaced by tower-sessions' `tower_sessions` table
+//! created at runtime via SqliteStore::migrate() — not visible to sqlx migration tests).
 //! Run: DATABASE_URL=sqlite://data/test_schema.db cargo test --features ssr schema_tests
 
 #[cfg(feature = "ssr")]
@@ -21,10 +24,13 @@ mod schema_tests {
         (file, pool)
     }
 
-    // Expected 16 v1 tables
+    // Expected tables after Phase 2 migrations.
+    // Phase 1 had 16 tables including `sessions`.
+    // Migration 002 drops `sessions` (replaced by tower-sessions' `tower_sessions` at runtime).
+    // Remaining domain tables: 15.
     const EXPECTED_TABLES: &[&str] = &[
         "users",
-        "sessions",
+        // "sessions" dropped by migration 002 — replaced by tower_sessions at runtime
         "boards",
         "board_members",
         "lists",
