@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use leptos_meta::*;
 use leptos_router::{components::Router, components::Routes, components::Route, path};
 use crate::routes::workspace::WorkspacePage;
+use crate::routes::signup::SignupPage;
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -27,6 +28,7 @@ pub fn App() -> impl IntoView {
         <Router>
             <Routes fallback=|| view! { <p>"Not found."</p> }>
                 <Route path=path!("/") view=WorkspacePage/>
+                <Route path=path!("/signup") view=SignupPage/>
             </Routes>
         </Router>
     }
