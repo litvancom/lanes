@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use leptos_meta::*;
 use leptos_router::{components::Router, components::Routes, components::Route, path};
+use crate::routes::workspace::WorkspacePage;
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -9,20 +10,24 @@ pub fn App() -> impl IntoView {
     view! {
         <Stylesheet id="leptos" href="/pkg/lanes.css"/>
         <Title text="Lanes"/>
+        <Link
+            rel="preload"
+            href="/fonts/Manrope-Variable.woff2"
+            as_="font"
+            type_="font/woff2"
+            crossorigin="anonymous"
+        />
+        <Link
+            rel="preload"
+            href="/fonts/JetBrainsMono-Variable.woff2"
+            as_="font"
+            type_="font/woff2"
+            crossorigin="anonymous"
+        />
         <Router>
             <Routes fallback=|| view! { <p>"Not found."</p> }>
-                <Route path=path!("/") view=HomePage/>
+                <Route path=path!("/") view=WorkspacePage/>
             </Routes>
         </Router>
-    }
-}
-
-#[component]
-fn HomePage() -> impl IntoView {
-    view! {
-        <main class="home">
-            <h1>"Lanes"</h1>
-            <p>"Your kanban board is loading..."</p>
-        </main>
     }
 }

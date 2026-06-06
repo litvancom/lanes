@@ -1,5 +1,8 @@
 pub mod app;
 pub mod models;
+pub mod routes;
+pub mod components;
+pub mod api;
 
 #[cfg(feature = "ssr")]
 pub mod server;
