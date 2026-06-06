@@ -207,3 +207,530 @@ input, textarea {
   font-size: 13px;
   margin-top: 8px;
 }
+
+/* ---------- auth screen (plan 02) ---------- */
+
+/* Full-viewport split-panel screen container */
+.lns-screen {
+  display: flex;
+  flex-direction: row;
+  height: 100vh;
+  min-height: 0;
+}
+
+/* ---- Form panel (left) ---- */
+.lns-auth-form-panel {
+  flex: 1 1 580px;
+  display: flex;
+  flex-direction: column;
+  padding: 40px 64px;
+  background: var(--bg-elevated);
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.lns-auth-logo-row {
+  flex: 0 0 auto;
+}
+
+.lns-auth-form-content {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  max-width: 380px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 32px 0;
+}
+
+/* Auth headings */
+.lns-auth-heading {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  margin: 0 0 8px;
+  color: var(--text);
+  line-height: 1.15;
+}
+
+.lns-auth-subtext {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin: 0 0 28px;
+  line-height: 1.45;
+}
+
+/* Auth field list container */
+.lns-auth-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Field wrapper */
+.lns-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Label row (label + optional inline suffix like "Forgot?") */
+.lns-field-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+/* Field label — 12px/700/-0.005em (UI-SPEC Small) */
+.lns-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  letter-spacing: -0.005em;
+  line-height: 1.3;
+}
+
+/* Auth input — 14px, padding 11px 13px, 1px border, radius 6px */
+.lns-input {
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-family: var(--font-sans);
+  background: var(--bg-elevated);
+  color: var(--text);
+  outline: none;
+  transition: border-color .12s, box-shadow .12s;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.lns-input:focus {
+  border-color: var(--accent);
+}
+
+.lns-input::placeholder {
+  color: var(--text-faint);
+}
+
+.lns-input.lns-input--error {
+  border-color: var(--danger);
+}
+
+/* Inline field error (UI-SPEC Error State Rendering) */
+.lns-field-error {
+  font-size: 12px;
+  color: var(--danger);
+  font-weight: 500;
+  margin-top: 4px;
+  display: block;
+}
+
+/* "Forgot?" link */
+.lns-forgot-link {
+  font-size: 12px;
+  color: var(--accent-text);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.lns-forgot-link:hover {
+  text-decoration: underline;
+}
+
+/* Custom checkbox (UI-SPEC Checkbox spec) */
+.lns-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.lns-checkbox-control {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1.5px solid var(--border-strong);
+  background: var(--bg-elevated);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background .1s, border-color .1s;
+  outline: none;
+}
+
+.lns-checkbox-control:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.lns-checkbox-control.lns-checkbox-control--checked {
+  background: var(--text);
+  border-color: var(--text);
+}
+
+.lns-checkbox-label {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+/* Primary CTA button — dark background, light text (UI-SPEC Color) */
+.lns-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.lns-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+/* Primary dark variant (design: dark/near-black, not accent) */
+.lns-btn--primary {
+  background: var(--text);
+  color: var(--text-inverse);
+  border-color: var(--text);
+  padding: 11px 14px;
+}
+
+.lns-btn--primary:hover {
+  background: #000;
+  border-color: #000;
+}
+
+.lns-btn--primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Full-width button */
+.lns-btn--full {
+  width: 100%;
+}
+
+/* OAuth divider */
+.lns-oauth-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lns-oauth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 2px 0;
+}
+
+.lns-oauth-divider-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.lns-oauth-divider-text {
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.lns-oauth-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+/* Auth footer link */
+.lns-auth-switch-link {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: center;
+  margin: 20px 0 0;
+}
+
+.lns-auth-link {
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.lns-auth-link:hover {
+  text-decoration: underline;
+}
+
+/* Error banner — aria-live region (UI-SPEC Accessibility) */
+.lns-error-banner {
+  margin-top: 8px;
+  min-height: 20px;
+}
+
+.lns-error-banner-text {
+  font-size: 13px;
+  color: var(--danger);
+  margin: 0;
+}
+
+/* Auth footer nav */
+.lns-auth-footer {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-faint);
+  padding-top: 16px;
+}
+
+/* Monospace text (JetBrains Mono) */
+.lns-mono {
+  font-family: var(--font-mono);
+}
+
+/* ---- Logo mark (UI-SPEC Logo spec) ---- */
+.lns-logo-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.lns-logo-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 18px;
+}
+
+.lns-logo-bar {
+  display: inline-block;
+  width: 4px;
+  border-radius: 1.5px;
+  background: var(--text);
+}
+
+.lns-logo-bar--short {
+  height: 9px; /* 50% */
+}
+
+.lns-logo-bar--full {
+  height: 18px; /* 100% */
+}
+
+.lns-logo-bar--accent {
+  height: 13.5px; /* 75% */
+  background: var(--accent);
+}
+
+.lns-logo-wordmark {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  line-height: 1;
+}
+
+/* ---- Brand panel (right, decorative) ---- */
+.lns-auth-brand-panel {
+  flex: 1 1 580px;
+  background: linear-gradient(160deg, oklch(94% 0.02 245) 0%, oklch(90% 0.03 245) 100%);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+}
+
+/* Floating board preview card */
+.lns-brand-card {
+  background: var(--bg-elevated);
+  width: 460px;
+  max-width: 100%;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 30px 80px rgba(28,25,23,0.18), 0 8px 24px rgba(28,25,23,0.08);
+  overflow: hidden;
+  transform: rotate(-1.5deg);
+}
+
+.lns-brand-card-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lns-brand-card-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: #7c5cff;
+  flex-shrink: 0;
+}
+
+.lns-brand-card-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.lns-brand-card-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.lns-brand-card-columns {
+  background: var(--bg-board);
+  padding: 10px;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+.lns-brand-col {
+  background: var(--bg-list);
+  border-radius: var(--radius-sm);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lns-brand-col-header {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text);
+  padding: 2px 4px 6px;
+}
+
+.lns-brand-mini-card {
+  background: var(--bg-elevated);
+  border-radius: 4px;
+  padding: 4px 6px;
+  box-shadow: var(--shadow-sm);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.lns-brand-mini-card.lns-brand-mini-card--done {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+
+/* Brand label color swatches */
+.lns-brand-label {
+  height: 4px;
+  width: 16px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.lns-brand-label--urgent  { background: oklch(0.65 0.25 25); }
+.lns-brand-label--errand  { background: oklch(0.74 0.10 60); }
+.lns-brand-label--travel  { background: oklch(0.68 0.10 240); }
+.lns-brand-label--family  { background: oklch(0.72 0.09 350); }
+.lns-brand-label--someday { background: oklch(0.72 0.005 0); }
+.lns-brand-label--finance { background: oklch(0.72 0.09 150); }
+
+/* Floating badge "14 cards moved today" */
+.lns-brand-badge {
+  position: absolute;
+  top: 80px;
+  right: 60px;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transform: rotate(3deg);
+}
+
+.lns-brand-badge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  flex-shrink: 0;
+}
+
+/* Floating "▸ DONE" dark label */
+.lns-brand-done-label {
+  position: absolute;
+  bottom: 100px;
+  left: 50px;
+  background: var(--text);
+  color: var(--text-inverse);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  transform: rotate(-4deg);
+  box-shadow: var(--shadow-md);
+}
+
+/* Bottom tagline block */
+.lns-brand-tagline-block {
+  position: absolute;
+  bottom: 36px;
+  left: 48px;
+  right: 48px;
+  max-width: 320px;
+}
+
+.lns-brand-tagline {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+.lns-brand-subtext {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 8px;
+  line-height: 1.5;
+}
+
+/* ---- Version / auth footer variants ---- */
+.lns-version {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* Generic auth error text (standalone, outside ErrorBanner component) */
+.lns-auth-error {
+  font-size: 13px;
+  color: var(--danger);
+  margin: 8px 0 0;
+}
