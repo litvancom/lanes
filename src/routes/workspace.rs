@@ -12,9 +12,9 @@ pub fn WorkspacePage() -> impl IntoView {
     // ServerAction for the write interaction (D-11)
     let add_action = ServerAction::<AddBoard>::new();
 
-    // Refetch boards after a successful add
+    // Refetch boards after a successful add (not on failed submissions — WR-01)
     Effect::new(move |_| {
-        if add_action.value().get().is_some() {
+        if matches!(add_action.value().get(), Some(Ok(_))) {
             boards.refetch();
         }
     });
