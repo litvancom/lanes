@@ -24,6 +24,50 @@ pub enum SeedError {
     Sqlx(#[from] sqlx::Error),
 }
 
+/// Reset a user's password hash — CLI admin command (D-20).
+///
+/// Rejects passwords shorter than 8 characters (D-17).
+/// Hashes the new password via spawn_blocking (Pitfall 9, T-02-10).
+/// Returns Err if the user email is not found.
+///
+/// # Security
+/// This function updates the `password_hash` column directly via a parameterized UPDATE.
+/// The CLI caller is trusted (local machine, admin access to the binary) — T-02-11.
+#[cfg(feature = "ssr")]
+pub async fn reset_password(
+    pool: &sqlx::SqlitePool,
+    email: &str,
+    new_password: &str,
+) -> Result<(), String> {
+    if new_password.len() < 8 {
+        return Err("Password must be at least 8 characters.".to_string());
+    }
+
+    let new_password_owned = new_password.to_string();
+    let hash = tokio::task::spawn_blocking(move || {
+        password_auth::generate_hash(new_password_owned)
+    })
+    .await
+    .map_err(|e| format!("Hash error: {e}"))?;
+
+    let email_lower = email.trim().to_lowercase();
+
+    let result = sqlx::query(
+        "UPDATE users SET password_hash = ? WHERE email = ?",
+    )
+    .bind(&hash)
+    .bind(&email_lower)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Database error: {e}"))?;
+
+    if result.rows_affected() == 0 {
+        return Err(format!("No user found with email: {}", email_lower));
+    }
+
+    Ok(())
+}
+
 /// Seed the database with representative demo fixtures.
 ///
 /// Refuses to run if any rows exist in the `users` table (D-08).
@@ -37,6 +81,14 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
         return Err(SeedError::DatabaseNotEmpty);
     }
 
+    // D-10: Hash Mira's demo password BEFORE the transaction — Argon2id is CPU-intensive
+    // and must NOT block the async executor (Pitfall 9, T-02-10).
+    let password_hash = tokio::task::spawn_blocking(|| {
+        password_auth::generate_hash("lanes-demo")
+    })
+    .await
+    .expect("password hash spawn_blocking");
+
     // All fixture inserts are inside a single transaction (T-02-02).
     let mut tx = write_pool.begin().await?;
 
@@ -46,15 +98,17 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
     let now: i64 = crate::server::now_millis().expect("time went backwards");
 
     // ------------------------------------------------------------------
-    // User: Mira (D-09)
+    // User: Mira (D-09, D-10)
+    // Demo credential: mira@example.com / lanes-demo (documented, not a production secret — T-02-11)
     // ------------------------------------------------------------------
     let user_id = Uuid::now_v7().to_string();
     sqlx::query(
-        "INSERT INTO users (id, email, password_hash, display_name, avatar_color, created_at) \
-         VALUES (?, ?, NULL, ?, ?, ?)",
+        "INSERT INTO users (id, email, password_hash, display_name, avatar_color, auth_provider, created_at) \
+         VALUES (?, ?, ?, ?, ?, 'password', ?)",
     )
     .bind(&user_id)
     .bind("mira@example.com")
+    .bind(&password_hash)
     .bind("Mira")
     .bind("#7c5cff")
     .bind(now)

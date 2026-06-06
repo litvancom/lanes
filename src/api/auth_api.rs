@@ -125,6 +125,46 @@ pub async fn signup(
     Ok(())
 }
 
+/// Login server function: authenticate with email + password; redirect to workspace on success.
+/// Login errors are always the SAME generic message to prevent account enumeration (D-18, T-02-08).
+/// keep_signed_in is accepted cosmetically so the checkbox POST field doesn't cause a 400 (D-07).
+#[server]
+pub async fn login(
+    email: String,
+    password: String,
+    keep_signed_in: Option<String>,
+) -> Result<(), ServerFnError> {
+    use crate::auth::{AuthSession, models::LoginCredentials};
+    use leptos_axum::extract;
+
+    // keep_signed_in is accepted but unused (D-07 — cosmetic checkbox, sessions always 30 days)
+    let _ = keep_signed_in;
+
+    let mut auth_session: AuthSession = extract()
+        .await
+        .map_err(|_| ServerFnError::new("Invalid email or password."))?;
+
+    let creds = LoginCredentials {
+        email: email.trim().to_lowercase(),
+        password,
+    };
+
+    // Both "auth backend error" and "no matching user" map to the SAME generic message (D-18, T-02-08).
+    let user = auth_session
+        .authenticate(creds)
+        .await
+        .map_err(|_| ServerFnError::new("Invalid email or password."))?
+        .ok_or_else(|| ServerFnError::new("Invalid email or password."))?;
+
+    auth_session
+        .login(&user)
+        .await
+        .map_err(|_| ServerFnError::new("Invalid email or password."))?;
+
+    leptos_axum::redirect("/");
+    Ok(())
+}
+
 /// Logout server function: clear session and redirect to /login (AUTH-03).
 #[server]
 pub async fn logout() -> Result<(), ServerFnError> {

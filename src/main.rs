@@ -42,6 +42,29 @@ async fn main() {
 
             println!("Seed complete.");
         }
+        Some(Commands::ResetPassword { email, new_password }) => {
+            use lanes::server::{
+                config::Config,
+                db::{make_write_pool, run_migrations},
+            };
+
+            let config = Config::from_env().expect("Failed to load config");
+            config.ensure_data_dir().expect("Failed to create data directory");
+
+            let write_pool = make_write_pool(&config.database_url)
+                .await
+                .expect("Failed to create write pool");
+
+            run_migrations(&write_pool)
+                .await
+                .expect("Failed to run database migrations");
+
+            lanes::seed::reset_password(&write_pool, &email, &new_password)
+                .await
+                .expect("reset-password failed");
+
+            println!("Password reset for {} complete.", email);
+        }
         None => {
             start_server().await;
         }

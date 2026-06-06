@@ -14,4 +14,12 @@ pub struct Cli {
 pub enum Commands {
     /// Seed demo data (fails if database is non-empty)
     Seed,
+    /// Reset a user's password — CLI admin command (D-20).
+    /// Minimum 8 characters. Exits with a non-zero code on error.
+    ResetPassword {
+        /// Email address of the account to reset
+        email: String,
+        /// New password (minimum 8 characters)
+        new_password: String,
+    },
 }
