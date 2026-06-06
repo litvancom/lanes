@@ -43,10 +43,7 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
     // ------------------------------------------------------------------
     // Timestamps — epoch millis UTC (D-03)
     // ------------------------------------------------------------------
-    let now: i64 = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("time went backwards")
-        .as_millis() as i64;
+    let now: i64 = crate::server::now_millis().expect("time went backwards");
 
     // ------------------------------------------------------------------
     // User: Mira (D-09)
