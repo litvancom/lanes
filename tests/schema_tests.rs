@@ -216,7 +216,7 @@ mod schema_tests {
 
     #[tokio::test]
     async fn test_no_rowid_or_autoincrement_sqlite_constructs() {
-        let (_file, pool) = migrated_pool().await;
+        let (_file, _pool) = migrated_pool().await;
 
         // Read the migration SQL and verify no SQLite-only constructs
         // This is a schema portability check (PLAT-01)
