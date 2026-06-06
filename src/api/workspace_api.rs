@@ -28,7 +28,7 @@ pub async fn create_board(pool: &sqlx::SqlitePool, name: String) -> Result<Board
     if name.is_empty() {
         return Err("Board name cannot be empty".into());
     }
-    if name.len() > 120 {
+    if name.chars().count() > 120 {
         return Err("Board name must be 120 characters or fewer".into());
     }
 
