@@ -61,10 +61,13 @@ pub async fn create_board(pool: &sqlx::SqlitePool, name: String) -> Result<Board
     // Surface a clock error rather than silently writing 0 (WR-03).
     let now = crate::server::now_millis().map_err(|e| format!("Clock error: {e}"))?;
 
-    // Parameterized INSERT — no format! into SQL (T-03-01 Tampering mitigation)
+    // Parameterized INSERT — no format! into SQL (T-03-01 Tampering mitigation).
+    // next_card_num is set explicitly (=1) to match the seed path and make the
+    // per-board card counter contract self-documenting rather than relying on
+    // the schema DEFAULT (WR-02).
     sqlx::query!(
-        r#"INSERT INTO boards (id, name, key_prefix, color, starred, archived, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 0, 0, ?, ?)"#,
+        r#"INSERT INTO boards (id, name, key_prefix, color, next_card_num, starred, archived, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 1, 0, 0, ?, ?)"#,
         id,
         name,
         key_prefix,
