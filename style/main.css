@@ -734,3 +734,69 @@ input, textarea {
   color: var(--danger);
   margin: 8px 0 0;
 }
+
+/* =====================================================================
+   InvitePanel (Plan 02-03) — board owner invite flow (COLLAB-02, D-13)
+   All classes here are append-only; existing blocks are untouched.
+   ===================================================================== */
+
+.lns-invite-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 400px;
+}
+
+.lns-invite-panel-heading {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+/* Link block — shown on success (D-13 always-visible link) */
+.lns-invite-link-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg-subtle);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.lns-invite-link-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.lns-invite-link-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.lns-invite-link-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-family: var(--font-mono, monospace);
+  background: var(--bg-elevated);
+  color: var(--text);
+  cursor: text;
+  user-select: all;
+}
+
+.lns-invite-copy-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.lns-invite-link-helper {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0;
+}
