@@ -29,6 +29,12 @@ use crate::components::board_card::safe_hex;
 /// - T-03-22: board names escaped by Leptos view! (no inner_html)
 /// - T-03-23: safe_hex() validates colors in dropdown chips
 /// - T-03-26: 300ms debounce + min 1 char before dispatch
+///
+/// SSR manual repro (03-09): seeded session cookie → GET / previously aborted the
+/// server with "Dropped SendWrapper<T> variable from a thread different to the one
+/// it has been created with" — leptos-use hooks allocated SendWrapper state during
+/// SSR setup, dropped on another tokio worker. Hooks are now constructed inside
+/// Effect::new (client-only), so GET / returns 200 with no panic in logs.
 #[component]
 pub fn WorkspaceTopbar(
     /// User's display name for the avatar bubble and greeting.
