@@ -736,6 +736,150 @@ input, textarea {
 }
 
 /* =====================================================================
+   Modal shell + CreateBoardModal (Plan 03-03)
+   All classes use design tokens, not raw hex.
+   ===================================================================== */
+
+/* Backdrop — fixed overlay, semi-transparent */
+.lns-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(28, 25, 23, 0.4);
+  z-index: 100;
+}
+
+/* Centered content box */
+.lns-modal-content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+  box-shadow: var(--shadow-md);
+  z-index: 101;
+  width: 480px;
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
+}
+
+/* Modal heading (17px/700, -0.015em) */
+.lns-modal-title {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--text);
+  margin: 0 0 20px 0;
+  line-height: 1.2;
+}
+
+/* Color swatches row */
+.lns-color-swatches {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+/* Individual swatch — 28×28 circle */
+.lns-color-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: border-color .1s, outline .1s;
+  outline: none;
+  padding: 0;
+  background-clip: content-box;
+}
+
+/* Selected swatch — 2px ring in --text color */
+.lns-color-swatch--selected {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+/* Template tiles container */
+.lns-template-tiles {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+/* Individual template tile */
+.lns-template-tile {
+  flex: 1;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color .1s, background .1s;
+  outline: none;
+}
+
+.lns-template-tile:hover {
+  border-color: var(--border-strong);
+}
+
+/* Selected tile — accent border + accent-soft background */
+.lns-template-tile--selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* Template tile name */
+.lns-template-tile-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 6px 0;
+}
+
+/* Mini list preview bars inside template tile */
+.lns-template-tile-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.lns-template-tile-bar {
+  height: 4px;
+  background: var(--bg-list);
+  border-radius: 2px;
+}
+
+/* Template tile color dot (12×12px) */
+.lns-template-tile-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-bottom: 6px;
+}
+
+/* Section label — 11px/600/uppercase */
+.lns-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0 0 8px 0;
+  display: block;
+}
+
+/* Modal form field group */
+.lns-modal-field {
+  margin-bottom: 16px;
+}
+
+/* =====================================================================
    InvitePanel (Plan 02-03) — board owner invite flow (COLLAB-02, D-13)
    All classes here are append-only; existing blocks are untouched.
    ===================================================================== */

@@ -8,7 +8,7 @@ use crate::models::{Board, BoardWithMeta, TodayCard};
 /// Board color swatches available for selection (D-06).
 /// Fixed set from the design fixture data.jsx — exactly these 5 values are valid.
 /// Validation at the write boundary rejects any color not in this list.
-#[cfg(feature = "ssr")]
+/// Not cfg-gated so the client modal can render swatches without SSR (safe: static design data).
 pub const BOARD_COLOR_SWATCHES: &[&str] = &[
     "#7c5cff", // purple
     "#0ea5e9", // blue

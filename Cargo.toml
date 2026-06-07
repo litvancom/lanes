@@ -11,6 +11,7 @@ crate-type = ["cdylib", "rlib"]
 leptos = { version = "0.8", features = [] }
 leptos_meta = { version = "0.8" }
 leptos_router = { version = "0.8" }
+leptos-use = { version = "0.18" }
 serde = { version = "1", features = ["derive"] }
 
 # uuid is SSR-only: ID generation happens server-side; models use String for IDs (Anti-Patterns)
