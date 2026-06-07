@@ -5,6 +5,7 @@ use crate::routes::workspace::WorkspacePage;
 use crate::routes::signup::SignupPage;
 use crate::routes::login::LoginPage;
 use crate::routes::invite::InviteAcceptPage;
+use crate::routes::board::BoardPage;
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -33,6 +34,7 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/signup") view=SignupPage/>
                 <Route path=path!("/login") view=LoginPage/>
                 <Route path=path!("/invite/:token") view=InviteAcceptPage/>
+                <Route path=path!("/board/:id") view=BoardPage/>
             </Routes>
         </Router>
     }
