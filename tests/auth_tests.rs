@@ -299,6 +299,52 @@ mod seed_auth_tests {
     }
 }
 
+/// CR-01 regression tests: CurrentUser DTO must not expose password_hash over the wire (AUTH-04).
+/// Run: DATABASE_URL=sqlite://data/lanes.db cargo test --features ssr auth_tests -- current_user_dto
+#[cfg(feature = "ssr")]
+mod current_user_dto_tests {
+    use lanes::auth::models::CurrentUser;
+
+    /// Regression (CR-01): serialized CurrentUser JSON must NOT contain a `password_hash` key.
+    /// If someone accidentally adds password_hash to CurrentUser, this test will catch it.
+    #[test]
+    fn test_get_current_user_dto_omits_password_hash() {
+        let user = CurrentUser {
+            id: "user-id-123".to_string(),
+            email: "alice@example.com".to_string(),
+            display_name: "Alice".to_string(),
+            avatar_color: "#7c5cff".to_string(),
+        };
+
+        let json = serde_json::to_string(&user).expect("CurrentUser must serialize to JSON");
+
+        assert!(
+            !json.contains("password_hash"),
+            "serialized CurrentUser must NOT contain 'password_hash'; got: {json}"
+        );
+    }
+
+    /// Round-trip: CurrentUser serializes and deserializes back to an equal value.
+    /// This proves it is a valid wire type usable by the WASM-side Resource.
+    #[test]
+    fn test_current_user_dto_round_trip() {
+        let original = CurrentUser {
+            id: "user-id-456".to_string(),
+            email: "bob@example.com".to_string(),
+            display_name: "Bob Builder".to_string(),
+            avatar_color: "#2dd4bf".to_string(),
+        };
+
+        let json = serde_json::to_string(&original).expect("serialize");
+        let deserialized: CurrentUser = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(deserialized.id, original.id);
+        assert_eq!(deserialized.email, original.email);
+        assert_eq!(deserialized.display_name, original.display_name);
+        assert_eq!(deserialized.avatar_color, original.avatar_color);
+    }
+}
+
 /// Task 3 tests: create_user() inner function behaviors (AUTH-01, D-17, D-18).
 #[cfg(feature = "ssr")]
 mod signup_tests {
