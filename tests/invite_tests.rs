@@ -295,6 +295,50 @@ mod invite_tests {
         assert_eq!(member_count, 0, "expired invite must not grant membership");
     }
 
+    /// Regression (CR-02 / D-14): guarded UPDATE `AND accepted = 0` must return AlreadyUsed
+    /// on a sequential double-accept, independent of write-pool connection serialization.
+    ///
+    /// This test proves single-use is enforced by the UPDATE's rows_affected check, not by
+    /// incidental max_connections=1 serialization. A second accept must fail with the specific
+    /// AcceptError::AlreadyUsed variant and must NOT duplicate the board_members row.
+    #[tokio::test]
+    async fn test_consume_invite_guarded_update_rejects_double_accept() {
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        let owner_id = insert_user_direct(&write_pool, "owner@test.com").await;
+        let board_id = insert_board_with_owner(&write_pool, "Board", &owner_id).await;
+        let invitee_id = insert_invitee(&write_pool, "diana@test.com").await;
+
+        let now = now_ms();
+        let token = create_invite(&write_pool, &board_id, &owner_id, "diana@test.com", now)
+            .await
+            .expect("create_invite");
+
+        // First consumption must succeed
+        let first = consume_invite(&write_pool, &token, &invitee_id, "diana@test.com", now + 1000)
+            .await;
+        assert!(first.is_ok(), "first consumption must succeed: {:?}", first);
+
+        // Second consumption: must fail with the specific AlreadyUsed variant (not just any error)
+        let second = consume_invite(&write_pool, &token, &invitee_id, "diana@test.com", now + 2000)
+            .await;
+        assert!(
+            matches!(second, Err(lanes::api::invite_api::AcceptError::AlreadyUsed)),
+            "second consumption must return AcceptError::AlreadyUsed; got: {:?}", second
+        );
+
+        // Exactly one board_members row — no duplicate membership from double-accept
+        let member_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM board_members WHERE board_id = ? AND user_id = ?"
+        )
+        .bind(&board_id)
+        .bind(&invitee_id)
+        .fetch_one(&write_pool)
+        .await
+        .expect("member count");
+        assert_eq!(member_count, 1, "double-accept must NOT create a duplicate board_members row");
+    }
+
     /// Test: already-accepted invite returns AlreadyUsed error, does not duplicate membership.
     #[tokio::test]
     async fn test_consume_invite_already_used() {
