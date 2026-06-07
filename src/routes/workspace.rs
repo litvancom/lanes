@@ -2,7 +2,7 @@ use leptos::prelude::*;
 use leptos_router::components::Redirect;
 use crate::api::workspace_api::{
     list_boards_with_meta, list_recent_boards, list_starred_boards, fetch_today_strip,
-    ToggleStarBoard, AddBoard,
+    ToggleStarBoard,
 };
 use crate::api::auth_api::get_current_user;
 use crate::components::board_card::BoardCard;
@@ -107,19 +107,6 @@ pub fn WorkspacePage() -> impl IntoView {
 
                     // ── Create board modal ─────────────────────────────────────────────────
                     let show_create_modal = RwSignal::new(false);
-
-                    // Refetch boards after a board is created (effect listens to AddBoard action)
-                    // CreateBoardModal internally has the AddBoard action; workspace refreshes
-                    // when show_create_modal transitions from true to false (user navigated away)
-                    // A simpler approach: refetch boards when any AddBoard completes.
-                    let add_action = ServerAction::<AddBoard>::new();
-                    Effect::new(move |_| {
-                        if matches!(add_action.value().get(), Some(Ok(_))) {
-                            boards.refetch();
-                            recents.refetch();
-                            starred.refetch();
-                        }
-                    });
 
                     // on_new_board callback opens the create modal
                     let on_new_board: Callback<()> = Callback::new(move |_| {
