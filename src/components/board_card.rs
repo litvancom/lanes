@@ -43,7 +43,7 @@ pub fn BoardCard(
     let board_id = board.id.clone();
     let board_id_for_star = board.id.clone();
     let board_name = board.name.clone();
-    let starred = board.starred;
+    let starred = RwSignal::new(board.starred);
     let card_count = board.card_count;
 
     // Card header class switches height based on the `large` prop
@@ -61,19 +61,23 @@ pub fn BoardCard(
                         {move || {
                             if let Some(cb) = on_star.clone() {
                                 let id = board_id_for_star.clone();
-                                let icon_name = if starred { "star-filled" } else { "star" };
-                                let aria_label = if starred { "Unstar board" } else { "Star board" };
                                 view! {
                                     <button
                                         class="board-card-star"
-                                        aria-label=aria_label
+                                        aria-label=move || if starred.get() { "Unstar board" } else { "Star board" }
                                         on:click=move |e: leptos::ev::MouseEvent| {
                                             // stop_propagation prevents the <a> link from navigating
                                             e.stop_propagation();
+                                            // Optimistic flip — matches board_header.rs pattern
+                                            starred.update(|v| *v = !*v);
                                             cb.run(id.clone());
                                         }
                                     >
-                                        <Icon name=icon_name/>
+                                        {move || if starred.get() {
+                                            view! { <Icon name="star-filled"/> }.into_any()
+                                        } else {
+                                            view! { <Icon name="star"/> }.into_any()
+                                        }}
                                     </button>
                                 }.into_any()
                             } else {
