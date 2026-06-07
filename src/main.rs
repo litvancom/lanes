@@ -1,3 +1,8 @@
+// Deeply nested Leptos view types push rustc's layout-query depth past the
+// default limit of 128 when compiling the bin (error: "queries overflow the
+// depth limit!"). Raise it per rustc's own suggestion.
+#![recursion_limit = "256"]
+
 #[cfg(feature = "ssr")]
 #[tokio::main]
 async fn main() {
