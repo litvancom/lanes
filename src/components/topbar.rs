@@ -49,35 +49,52 @@ pub fn WorkspaceTopbar(
     let search_action = ServerAction::<SearchBoards>::new();
 
     // --- Debounced search dispatcher (300ms, min 1 char — Pitfall 4, T-03-26) ---
+    // debounced_stored holds Option<debounced_fn> — None on the server (Effect::new skips SSR),
+    // populated in the browser after mount. The on:input handler calls it only when present.
     let search_action_stored = StoredValue::new(search_action);
-    let debounced_search = use_debounce_fn(
-        move || {
-            let q = search_query.get();
-            let trimmed = q.trim().to_string();
-            if trimmed.len() >= 1 {
-                search_action_stored.get_value().dispatch(SearchBoards { query: trimmed });
-                show_dropdown.set(true);
-            } else {
-                show_dropdown.set(false);
-            }
-        },
-        300.0,
-    );
-    let debounced_stored = StoredValue::new(debounced_search);
+    let debounced_stored = StoredValue::new(None::<Box<dyn Fn() + Send + Sync>>);
+
+    // Constructed inside Effect::new so it runs only on the client (Effects are skipped
+    // during SSR). Prevents use_debounce_fn's SendWrapper-backed closure from being
+    // allocated on the multi-threaded server runtime and dropped on a different worker
+    // thread (T-03-09-01).
+    Effect::new(move |_| {
+        let debounced_search = use_debounce_fn(
+            move || {
+                let q = search_query.get();
+                let trimmed = q.trim().to_string();
+                if trimmed.len() >= 1 {
+                    search_action_stored.get_value().dispatch(SearchBoards { query: trimmed });
+                    show_dropdown.set(true);
+                } else {
+                    show_dropdown.set(false);
+                }
+            },
+            300.0,
+        );
+        // use_debounce_fn's closure returns its internal handle — discard it so the
+        // stored fn is a plain Fn().
+        debounced_stored.set_value(Some(Box::new(move || {
+            debounced_search();
+        })));
+    });
 
     // --- ⌘K / Ctrl+K focus + Escape close (D-14, Pattern 2) ---
+    // Also inside Effect::new — client-only, never runs during SSR.
     let show_dropdown2 = show_dropdown;
     let search_ref2 = search_ref;
-    let _ = use_event_listener(use_window(), leptos::ev::keydown, move |e: leptos::ev::KeyboardEvent| {
-        if (e.meta_key() || e.ctrl_key()) && e.key() == "k" {
-            e.prevent_default();
-            if let Some(input) = search_ref2.get() {
-                let _ = input.focus();
+    Effect::new(move |_| {
+        let _ = use_event_listener(use_window(), leptos::ev::keydown, move |e: leptos::ev::KeyboardEvent| {
+            if (e.meta_key() || e.ctrl_key()) && e.key() == "k" {
+                e.prevent_default();
+                if let Some(input) = search_ref2.get() {
+                    let _ = input.focus();
+                }
             }
-        }
-        if e.key() == "Escape" {
-            show_dropdown2.set(false);
-        }
+            if e.key() == "Escape" {
+                show_dropdown2.set(false);
+            }
+        });
     });
 
     // --- Avatar initial ---
@@ -108,7 +125,12 @@ pub fn WorkspaceTopbar(
                         if val.trim().is_empty() {
                             show_dropdown.set(false);
                         } else {
-                            debounced_stored.get_value()();
+                            // with_value: Box<dyn Fn()> is not Clone, so call in place.
+                            debounced_stored.with_value(|d| {
+                                if let Some(debounced) = d {
+                                    debounced();
+                                }
+                            });
                         }
                     }
                     on:focus=move |_| {

@@ -6,8 +6,8 @@ use leptos_use::{use_event_listener, use_window};
 /// - Renders only when `show` is `true` (`<Show when>`).
 /// - Backdrop click closes the modal (`show.set(false)`).
 /// - Content click stops propagation so backdrop close is not triggered.
-/// - Escape key closes the modal via a `use_event_listener` on `use_window()`.
-///   `use_event_listener` + `use_window()` are SSR-safe — no-ops during server render.
+/// - Escape key closes the modal via `use_event_listener` inside `Effect::new`
+///   (client-only — never runs during SSR to avoid SendWrapper cross-thread drops).
 /// - `role="dialog"`, `aria-modal="true"`, `aria-labelledby` pointing at the
 ///   inner heading id (callers set `id="modal-heading"` on their `<h2>` or `<h3>`).
 ///
@@ -21,13 +21,16 @@ pub fn Modal(
     children: ChildrenFn,
 ) -> impl IntoView {
     // Escape key closes the modal.
-    // use_window() returns Option<web_sys::Window> (None on server) — SSR-safe.
-    // The handler receives a leptos::ev::KeyboardEvent via leptos_use's type inference.
-    // _ prefix suppresses the "unused cleanup fn" warning; cleanup fires on component unmount.
-    let _cleanup = use_event_listener(use_window(), leptos::ev::keydown, move |e: leptos::ev::KeyboardEvent| {
-        if e.key() == "Escape" {
-            show.set(false);
-        }
+    // Constructed inside Effect::new so it runs only on the client (Effects are
+    // skipped during SSR). This prevents any SendWrapper state from being allocated
+    // on the multi-threaded server runtime and subsequently dropped on a different
+    // worker thread.
+    Effect::new(move |_| {
+        let _cleanup = use_event_listener(use_window(), leptos::ev::keydown, move |e: leptos::ev::KeyboardEvent| {
+            if e.key() == "Escape" {
+                show.set(false);
+            }
+        });
     });
 
     let on_backdrop_click = move |_| show.set(false);
