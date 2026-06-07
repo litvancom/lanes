@@ -47,12 +47,16 @@ pub async fn require_board_member(
     .fetch_optional(pool)
     .await
     .map_err(|e| {
+        // A DB failure is a 5xx-class condition, not a "not found" — surfacing it as the D-12
+        // existence-hiding error would tell a board owner the board is gone during a transient
+        // hiccup and hide the fault from the caller (WR-04).
         tracing::error!("require_board_member DB error: {e}");
-        ServerFnError::new("board not found") // D-12: never reveal existence
+        ServerFnError::new("temporarily unavailable")
     })?;
 
     match role {
         Some(r) => Ok((user, r)),
-        None => Err(ServerFnError::new("board not found")), // D-12
+        // D-12: never reveal existence for the genuine non-member / deleted-board case.
+        None => Err(ServerFnError::new("board not found")),
     }
 }
