@@ -15,14 +15,14 @@ pub fn safe_hex(c: &str) -> &str {
 ///
 /// Design spec (screen 02): white card, border 1px --border, radius --radius-md.
 /// Header band: 60px (regular) or 100px (large/recent variant) with gradient.
-/// Hover-revealed star button (28x28, opacity 0→1, transition 0.12s) — stop_propagation
+/// Hover-revealed star button (28x28, opacity 0→1, transition 0.12s) — prevent_default + stop_propagation
 /// prevents the star click from also navigating to the board (Pitfall 5).
 /// Body: board name (14px/700), card count meta (12px --text-muted).
 /// Wrapped in an <a> link to /board/:id for keyboard/click navigation.
 ///
 /// Threat mitigations:
 /// - T-03-23: safe_hex() validates color before CSS gradient interpolation
-/// - T-03-25: stop_propagation on star click prevents accidental nav
+/// - T-03-25: prevent_default + stop_propagation on star click prevents accidental nav
 /// - T-03-22: Leptos view! escapes all text nodes (no inner_html)
 #[component]
 pub fn BoardCard(
@@ -66,7 +66,8 @@ pub fn BoardCard(
                                         class="board-card-star"
                                         aria-label=move || if starred.get() { "Unstar board" } else { "Star board" }
                                         on:click=move |e: leptos::ev::MouseEvent| {
-                                            // stop_propagation prevents the <a> link from navigating
+                                            // prevent_default cancels the ancestor <a> navigation; stop_propagation stops other listeners
+                                            e.prevent_default();
                                             e.stop_propagation();
                                             // Optimistic flip — matches board_header.rs pattern
                                             starred.update(|v| *v = !*v);
