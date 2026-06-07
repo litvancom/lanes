@@ -30,9 +30,23 @@ pub fn WorkspacePage() -> impl IntoView {
     view! {
         <Suspense fallback=|| ()>
             {move || current_user.get().map(|result| match result {
-                // Unauthenticated or session error → redirect to /login (D-12, T-02-09)
-                Ok(None) | Err(_) => view! {
+                // Genuinely unauthenticated → redirect to /login (D-12, T-02-09)
+                Ok(None) => view! {
                     <Redirect path="/login"/>
+                }.into_any(),
+                // Transient failure determining auth (session-store hiccup, server-fn error) — do
+                // NOT bounce an authenticated user to /login; show a recoverable retry state (WR-05).
+                Err(_) => view! {
+                    <div class="workspace-page">
+                        <p class="board-error">"Something went wrong determining your session."</p>
+                        <button
+                            type="button"
+                            class="lns-btn"
+                            on:click=move |_| current_user.refetch()
+                        >
+                            "Retry"
+                        </button>
+                    </div>
                 }.into_any(),
                 Ok(Some(_user)) => view! {
                     <div class="workspace-page">

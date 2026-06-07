@@ -72,14 +72,30 @@ pub fn InviteAcceptPage() -> impl IntoView {
                             let tok = token();
                             current_user.get().map(|result| {
                                 match result {
-                                    // Unauthenticated — redirect to /login?return=/invite/{token} (D-12)
-                                    Ok(None) | Err(_) => {
+                                    // Genuinely unauthenticated — redirect to /login?return=/invite/{token} (D-12)
+                                    Ok(None) => {
                                         let return_path = format!("/invite/{}", tok);
                                         let login_url = format!("/login?return={}", return_path);
                                         view! {
                                             <leptos_router::components::Redirect path=login_url/>
                                         }.into_any()
                                     }
+                                    // Transient failure determining auth — do NOT bounce to /login;
+                                    // show a recoverable retry state instead (WR-05).
+                                    Err(_) => view! {
+                                        <div>
+                                            <p class="lns-auth-subtext">
+                                                "Something went wrong. Please try again."
+                                            </p>
+                                            <button
+                                                type="button"
+                                                class="lns-btn lns-btn--primary lns-btn--full"
+                                                on:click=move |_| current_user.refetch()
+                                            >
+                                                "Retry"
+                                            </button>
+                                        </div>
+                                    }.into_any(),
                                     // Authenticated — show accept form
                                     Ok(Some(_user)) => view! {
                                         <div>
