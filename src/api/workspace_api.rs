@@ -862,3 +862,40 @@ pub async fn restore_board(board_id: String) -> Result<(), ServerFnError> {
             ServerFnError::new("Failed to restore board")
         })
 }
+
+/// Internal: permanently delete a board by ID.
+/// ON DELETE CASCADE in the schema removes all child rows: lists, cards, board_members,
+/// labels, etc. — FK enforcement must be ON (write pool has `foreign_keys(true)`).
+#[cfg(feature = "ssr")]
+pub async fn delete_board_inner(
+    pool: &sqlx::SqlitePool,
+    board_id: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!("DELETE FROM boards WHERE id = ?", board_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Permanently delete a board (owner-only, WORK-05, D-11, T-03-27).
+/// Cascades: all lists, cards, board_members, labels for this board are removed.
+/// Only the board owner may delete. Non-members receive a generic "board not found" error.
+#[server]
+pub async fn delete_board(board_id: String) -> Result<(), ServerFnError> {
+    use crate::auth::helpers::require_board_member;
+    use crate::server::state::AppState;
+
+    let state = expect_context::<AppState>();
+    let (_user, role) = require_board_member(&board_id, &state.read_pool.0).await?;
+
+    if role != "owner" {
+        return Err(ServerFnError::new("Only the board owner can delete this board"));
+    }
+
+    delete_board_inner(&state.write_pool.0, &board_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("delete_board error: {:?}", e);
+            ServerFnError::new("Failed to delete board")
+        })
+}

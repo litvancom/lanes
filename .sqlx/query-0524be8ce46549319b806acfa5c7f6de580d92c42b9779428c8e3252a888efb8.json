@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id, b.name, b.key_prefix, b.color,\n                  m.starred as \"starred: bool\",\n                  b.archived as \"archived: bool\",\n                  (SELECT COUNT(*) FROM cards c\n                   JOIN lists l ON l.id = c.list_id\n                   WHERE l.board_id = b.id AND c.archived = 0) as \"card_count!: i64\",\n                  m.last_viewed_at,\n                  b.created_at, b.updated_at\n           FROM boards b\n           JOIN board_members m ON m.board_id = b.id\n           WHERE m.user_id = ? AND b.archived = 0\n           ORDER BY b.created_at ASC",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "key_prefix",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "color",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "starred: bool",
+        "ordinal": 4,
+        "type_info": "Integer"
+      },
+      {
+        "name": "archived: bool",
+        "ordinal": 5,
+        "type_info": "Integer"
+      },
+      {
+        "name": "card_count!: i64",
+        "ordinal": 6,
+        "type_info": "Integer"
+      },
+      {
+        "name": "last_viewed_at",
+        "ordinal": 7,
+        "type_info": "Integer"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 8,
+        "type_info": "Integer"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 9,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "0524be8ce46549319b806acfa5c7f6de580d92c42b9779428c8e3252a888efb8"
+}

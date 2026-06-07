@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE board_members SET starred = 1 - starred WHERE board_id = ? AND user_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "f73dc092af7f84604972eaa2bb1c852e544a6166a1a237a63ac875bd79b09735"
+}
