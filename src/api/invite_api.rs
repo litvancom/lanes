@@ -6,7 +6,12 @@
 //! - Tokens stored in plaintext (high-entropy; hashing adds cost without benefit — D-14)
 //! - Only board owners can create invites (D-09, T-02-14)
 //! - Acceptance strictly checks invite.email == user.email (case-insensitive, D-15, T-02-19)
-//! - accepted flag checked BEFORE the transaction to prevent race-based double-accept (D-14, T-02-20)
+//! - Single-use enforced by the guarded `UPDATE invites SET accepted = 1 WHERE id = ? AND accepted = 0`
+//!   inside the transaction: `rows_affected() == 0` means the row was already accepted (race or
+//!   sequential re-accept) → the transaction is rolled back and AcceptError::AlreadyUsed is returned.
+//!   Single-use does NOT rely on max_connections=1 serialization (CR-02, D-14, T-02-20).
+//! - The pre-transaction accepted check is a fast-path / friendly-error layer; the guarded UPDATE
+//!   is the authoritative single-use enforcer, robust to Postgres migration and larger write pools.
 //! - All SQL is parameterized — no format! into SQL (T-02-17)
 
 use leptos::prelude::*;
@@ -173,16 +178,23 @@ pub async fn invite_member(
 ///
 /// Checks (in order, per RESEARCH Pattern 7 + Pitfall — check accepted BEFORE INSERT):
 /// 1. Token lookup — missing → AcceptError::Invalid
-/// 2. Already accepted check — accepted != 0 → AcceptError::AlreadyUsed (BEFORE expiry/email)
+/// 2. Already accepted check — accepted != 0 → AcceptError::AlreadyUsed (fast-path before expiry/email)
 /// 3. Expiry check — expires_at < now → AcceptError::Expired
 /// 4. Strict email binding — invite.email != user_email (case-insensitive) → AcceptError::WrongEmail (D-15, T-02-19)
-/// 5. Transaction: UPDATE invites SET accepted=1 + INSERT OR IGNORE INTO board_members (D-14, T-02-20)
+/// 5. Transaction (authoritative single-use enforcement — CR-02, D-14, T-02-20):
+///    a. `UPDATE invites SET accepted = 1 WHERE id = ? AND accepted = 0` (guarded UPDATE)
+///    b. If rows_affected() == 0: roll back → AcceptError::AlreadyUsed (race or sequential re-accept)
+///    c. INSERT OR IGNORE INTO board_members (only reached when rows_affected() == 1)
+///    d. commit
 ///
 /// # Security
 /// - Case-insensitive email comparison via `.to_lowercase()` (D-15)
-/// - accepted checked first to short-circuit before any mutation (T-02-20)
+/// - Steps 1–4 are fast-path / friendly-error layer (pre-mutation checks)
+/// - The guarded UPDATE in step 5 is the authoritative single-use enforcer: single-use holds
+///   regardless of write-pool max_connections or Postgres migration (CR-02, D-14)
 /// - Both mutations in one transaction — partial failure is impossible (D-14, T-02-20)
-/// - INSERT OR IGNORE prevents duplicate board_members if a race slips through (last-line defence)
+/// - INSERT OR IGNORE is belt-and-suspenders for concurrent membership; won't fire in practice
+///   because the guarded UPDATE is the gate
 #[cfg(feature = "ssr")]
 pub async fn consume_invite(
     pool: &sqlx::SqlitePool,
@@ -218,15 +230,25 @@ pub async fn consume_invite(
     let board_id = row.board_id.clone();
     let invite_id = row.id.clone();
 
-    // 5. Atomic accept: mark invite used + insert board_members in one transaction (D-14, T-02-20)
+    // 5. Atomic accept: guarded UPDATE + board_members insert in one transaction (CR-02, D-14, T-02-20)
+    //
+    // The `AND accepted = 0` predicate makes this the authoritative single-use gate.
+    // If two concurrent requests both pass the pre-check above, only one can win the UPDATE race;
+    // the other sees rows_affected() == 0 and gets AlreadyUsed. No longer relies on max_connections=1.
     let mut tx = pool.begin().await?;
 
-    sqlx::query!(
-        "UPDATE invites SET accepted = 1 WHERE id = ?",
+    let res = sqlx::query!(
+        "UPDATE invites SET accepted = 1 WHERE id = ? AND accepted = 0",
         invite_id
     )
     .execute(&mut *tx)
     .await?;
+
+    if res.rows_affected() == 0 {
+        // The invite was already accepted (race or sequential re-accept): roll back and reject.
+        tx.rollback().await?;
+        return Err(AcceptError::AlreadyUsed);
+    }
 
     sqlx::query!(
         "INSERT OR IGNORE INTO board_members (board_id, user_id, role) VALUES (?, ?, 'member')",

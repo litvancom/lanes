@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE invites SET accepted = 1 WHERE id = ? AND accepted = 0",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "96867fd56596f8484fac9e9d0687e0a400d7810b8aabb9637aced9d2db0cb59f"
+}
