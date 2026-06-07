@@ -147,6 +147,7 @@ async fn start_server() {
             let leptos_options = leptos_options.clone();
             move || {
                 use leptos::prelude::*;
+                use leptos_meta::MetaTags;
                 view! {
                     <!DOCTYPE html>
                     <html lang="en">
@@ -155,6 +156,7 @@ async fn start_server() {
                             <meta name="viewport" content="width=device-width, initial-scale=1"/>
                             <AutoReload options=leptos_options.clone() />
                             <HydrationScripts options=leptos_options.clone()/>
+                            <MetaTags/>
                         </head>
                         <body>
                             <App/>
@@ -165,12 +167,14 @@ async fn start_server() {
         })
         .fallback(leptos_axum::file_and_error_handler::<AppState, _>(|_| {
             use leptos::prelude::*;
+            use leptos_meta::MetaTags;
             view! {
                 <!DOCTYPE html>
                 <html lang="en">
                     <head>
                         <meta charset="utf-8"/>
                         <meta name="viewport" content="width=device-width, initial-scale=1"/>
+                        <MetaTags/>
                     </head>
                     <body>
                         <App/>
