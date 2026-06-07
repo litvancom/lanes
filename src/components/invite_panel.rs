@@ -93,19 +93,29 @@ pub fn InvitePanel(
                                     let url = url_for_display.clone();
                                     move |_| {
                                         // Clipboard copy: the link input is readonly and selectable.
-                                        // WASM-side copy via wasm_bindgen eval (no web-sys feature flags needed).
+                                        // WASM-side copy via a fixed JS function that takes the URL as a
+                                        // bound argument (WR-03). The URL is passed as a real JS value, not
+                                        // interpolated into source text, so no Debug-escaping/eval contract
+                                        // can be broken into DOM-based XSS even if the URL grows richer.
                                         #[cfg(target_arch = "wasm32")]
                                         {
                                             use wasm_bindgen::prelude::*;
                                             #[wasm_bindgen]
                                             extern "C" {
-                                                fn eval(s: &str) -> JsValue;
+                                                #[wasm_bindgen(js_name = Function)]
+                                                type JsFunction;
+                                                #[wasm_bindgen(constructor, js_class = "Function")]
+                                                fn new(arg: &str, body: &str) -> JsFunction;
+                                                #[wasm_bindgen(method, js_name = call)]
+                                                fn call1(this: &JsFunction, ctx: &JsValue, a: &JsValue) -> JsValue;
                                             }
-                                            let script = format!(
-                                                "navigator.clipboard && navigator.clipboard.writeText({:?})",
-                                                url
+                                            // The URL only ever appears as the `text` argument value, never
+                                            // as code, so it cannot alter the executed statement.
+                                            let writer = JsFunction::new(
+                                                "text",
+                                                "if (navigator.clipboard) navigator.clipboard.writeText(text);",
                                             );
-                                            eval(&script);
+                                            writer.call1(&JsValue::NULL, &JsValue::from_str(&url));
                                         }
                                         let _ = &url; // suppress unused-variable in SSR build
                                         copied.set(true);
