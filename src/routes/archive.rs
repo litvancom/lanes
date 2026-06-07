@@ -17,6 +17,7 @@ use leptos::web_sys;
 use leptos_router::components::Redirect;
 use crate::api::workspace_api::{
     list_archived_boards, RestoreBoard, DeleteBoard,
+    list_boards_with_meta, list_starred_boards, ToggleStarBoard,
 };
 use crate::api::auth_api::get_current_user;
 use crate::components::sidebar::WorkspaceSidebar;
@@ -151,8 +152,24 @@ pub fn ArchivePage() -> impl IntoView {
                         list_archived_boards().await
                     });
 
+                    // Sidebar board data — mirrors workspace.rs pattern (WR-04)
+                    let boards = Resource::new(|| (), |_| async { list_boards_with_meta().await });
+                    let starred = Resource::new(|| (), |_| async { list_starred_boards().await });
+
                     let restore_action = ServerAction::<RestoreBoard>::new();
                     let delete_action = ServerAction::<DeleteBoard>::new();
+
+                    // Star action for sidebar — refetches boards/starred on success
+                    let star_action = ServerAction::<ToggleStarBoard>::new();
+                    Effect::new(move |_| {
+                        if matches!(star_action.value().get(), Some(Ok(_))) {
+                            boards.refetch();
+                            starred.refetch();
+                        }
+                    });
+                    let star_cb: Callback<String> = Callback::new(move |board_id: String| {
+                        star_action.dispatch(ToggleStarBoard { board_id });
+                    });
 
                     // Refetch archived list when restore or delete succeeds
                     Effect::new(move |_| {
@@ -173,11 +190,19 @@ pub fn ArchivePage() -> impl IntoView {
 
                     view! {
                         <div class="lns-app">
-                            // Sidebar — no boards/starred (archive page has no board list context)
+                            // Sidebar — shows user's live boards and starred sections (WR-04)
                             <WorkspaceSidebar
-                                all_boards=Signal::derive(|| vec![])
-                                starred_boards=Signal::derive(|| vec![])
-                                on_star=Callback::new(|_: String| {})
+                                all_boards=Signal::derive(move || {
+                                    boards.get()
+                                        .and_then(|r| r.ok())
+                                        .unwrap_or_default()
+                                })
+                                starred_boards=Signal::derive(move || {
+                                    starred.get()
+                                        .and_then(|r| r.ok())
+                                        .unwrap_or_default()
+                                })
+                                on_star=star_cb
                             />
 
                             // Main column
