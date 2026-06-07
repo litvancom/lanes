@@ -556,35 +556,45 @@ mod workspace_api_tests {
         let today_start = (now / day_ms) * day_ms;
         let tomorrow_start = today_start + day_ms;
 
-        // Card 1: overdue (due before today_start)
+        // Pre-compute sequential FractionalIndex positions as owned Strings
+        // (sqlx::query! macro requires owned String bindings, not temporaries)
+        let fi0 = FractionalIndex::default();
+        let fi1 = FractionalIndex::new_after(&fi0);
+        let fi2 = FractionalIndex::new_after(&fi1);
+        let fi3 = FractionalIndex::new_after(&fi2);
+        let fi4 = FractionalIndex::new_after(&fi3);
+        let fi0_s = fi0.to_string();
+        let fi1_s = fi1.to_string();
+        let fi2_s = fi2.to_string();
+        let fi3_s = fi3.to_string();
+        let fi4_s = fi4.to_string();
+
+        // Card 1: overdue by 1 second (due 1s before today_start — just before midnight)
         let card1_id = Uuid::now_v7().to_string();
-        let pos1 = FractionalIndex::default().to_string();
         let overdue_due_at = today_start - 1000; // 1 second before midnight = overdue
         sqlx::query!(
             r#"INSERT INTO cards (id, list_id, board_id, card_num, title, position, due_at, done, archived, created_at, updated_at)
                VALUES (?, ?, ?, 1, 'Overdue Card', ?, ?, 0, 0, ?, ?)"#,
-            card1_id, list_id, board_id, pos1, overdue_due_at, now, now
+            card1_id, list_id, board_id, fi0_s, overdue_due_at, now, now
         )
         .execute(&write_pool).await.expect("insert overdue card");
 
-        // Card 2: due today (within today, not overdue)
+        // Card 2: due today (1 hour into today — not overdue)
         let card2_id = Uuid::now_v7().to_string();
-        let pos2 = FractionalIndex::new_after(&FractionalIndex::default()).to_string();
-        let today_due_at = today_start + 3600_000; // 1 hour into today = due today, not overdue
+        let today_due_at = today_start + 3_600_000; // 1 hour into today = due today, not overdue
         sqlx::query!(
             r#"INSERT INTO cards (id, list_id, board_id, card_num, title, position, due_at, done, archived, created_at, updated_at)
                VALUES (?, ?, ?, 2, 'Due Today Card', ?, ?, 0, 0, ?, ?)"#,
-            card2_id, list_id, board_id, pos2, today_due_at, now, now
+            card2_id, list_id, board_id, fi1_s, today_due_at, now, now
         )
         .execute(&write_pool).await.expect("insert due today card");
 
         // Card 3: done = should be excluded
         let card3_id = Uuid::now_v7().to_string();
-        let pos3 = FractionalIndex::new_after(&FractionalIndex::new_after(&FractionalIndex::default())).to_string();
         sqlx::query!(
             r#"INSERT INTO cards (id, list_id, board_id, card_num, title, position, due_at, done, archived, created_at, updated_at)
                VALUES (?, ?, ?, 3, 'Done Card', ?, ?, 1, 0, ?, ?)"#,
-            card3_id, list_id, board_id, pos3, overdue_due_at, now, now
+            card3_id, list_id, board_id, fi2_s, overdue_due_at, now, now
         )
         .execute(&write_pool).await.expect("insert done card");
 
@@ -593,22 +603,74 @@ mod workspace_api_tests {
         sqlx::query!(
             r#"INSERT INTO cards (id, list_id, board_id, card_num, title, position, due_at, done, archived, created_at, updated_at)
                VALUES (?, ?, ?, 1, 'Other User Card', ?, ?, 0, 0, ?, ?)"#,
-            card4_id, other_list_id, other_board_id, pos1, overdue_due_at, now, now
+            card4_id, other_list_id, other_board_id, fi0_s, overdue_due_at, now, now
         )
         .execute(&write_pool).await.expect("insert other user card");
+
+        // Card 5: ALL-TIME overdue — due 30 days ago (WORK-02: no lower date bound)
+        // This card must appear in the strip even though it is far in the past.
+        let weeks_ago_id = Uuid::now_v7().to_string();
+        let weeks_ago_due_at = today_start - 30 * day_ms; // 30 days before today_start
+        sqlx::query!(
+            r#"INSERT INTO cards (id, list_id, board_id, card_num, title, position, due_at, done, archived, created_at, updated_at)
+               VALUES (?, ?, ?, 5, 'Weeks Ago Card', ?, ?, 0, 0, ?, ?)"#,
+            weeks_ago_id, list_id, board_id, fi3_s, weeks_ago_due_at, now, now
+        )
+        .execute(&write_pool).await.expect("insert weeks-ago card");
+
+        // Card 6: due tomorrow (inside tomorrow window) — must be EXCLUDED
+        // Filter is `due_at < tomorrow_start`, so a card due 1 hour into tomorrow is not shown.
+        let tomorrow_id = Uuid::now_v7().to_string();
+        let tomorrow_due_at = tomorrow_start + 3_600_000; // 1 hour into tomorrow
+        sqlx::query!(
+            r#"INSERT INTO cards (id, list_id, board_id, card_num, title, position, due_at, done, archived, created_at, updated_at)
+               VALUES (?, ?, ?, 6, 'Tomorrow Card', ?, ?, 0, 0, ?, ?)"#,
+            tomorrow_id, list_id, board_id, fi4_s, tomorrow_due_at, now, now
+        )
+        .execute(&write_pool).await.expect("insert tomorrow card");
 
         let strip = fetch_today_strip_inner(&read_pool, &user_id)
             .await.expect("fetch today strip");
 
-        assert_eq!(strip.len(), 2, "should have 2 cards (overdue + due today); done and other-user excluded");
-        // Ordered by due_at ASC: overdue card comes first
-        assert_eq!(strip[0].id, card1_id, "overdue card should be first (earlier due_at)");
-        assert!(strip[0].overdue, "first card should be overdue");
-        assert_eq!(strip[1].id, card2_id, "due today card should be second");
-        assert!(!strip[1].overdue, "second card should not be overdue");
+        // --- Inclusion checks ---
 
-        // Verify the card due after tomorrow is excluded (if any due_at >= tomorrow_start)
-        let _ = tomorrow_start; // used for documentation clarity
+        // weeks_ago card: all-time overdue policy — a non-done card due 30 days ago is included
+        let weeks_ago_entry = strip.iter().find(|c| c.id == weeks_ago_id);
+        assert!(weeks_ago_entry.is_some(), "weeks-ago card must be included (all-time overdue policy)");
+        assert!(weeks_ago_entry.unwrap().overdue, "weeks-ago card must have overdue == true");
+
+        // card1: overdue by 1 second before midnight — included and overdue
+        let card1_entry = strip.iter().find(|c| c.id == card1_id);
+        assert!(card1_entry.is_some(), "1-second-before-midnight overdue card must be included");
+        assert!(card1_entry.unwrap().overdue, "1-second-before-midnight card must be overdue");
+
+        // card2: due today (not overdue) — included and not overdue
+        let card2_entry = strip.iter().find(|c| c.id == card2_id);
+        assert!(card2_entry.is_some(), "due-today card must be included");
+        assert!(!card2_entry.unwrap().overdue, "due-today card must have overdue == false");
+
+        // --- Exclusion checks ---
+
+        // done card excluded
+        assert!(strip.iter().all(|c| c.id != card3_id), "done card must be excluded");
+        // other-user card excluded
+        assert!(strip.iter().all(|c| c.id != card4_id), "other-user card must be excluded");
+        // tomorrow card excluded (due_at >= tomorrow_start)
+        assert!(strip.iter().all(|c| c.id != tomorrow_id), "tomorrow card must be excluded (filter upper bound is due_at < tomorrow_start)");
+
+        // --- Exact count: 3 qualifying user cards (weeks_ago + card1/overdue + card2/today) ---
+        assert_eq!(strip.len(), 3, "exactly 3 cards should qualify: weeks-ago, overdue-1s, and due-today");
+
+        // --- Order: results are sorted by due_at ASC ---
+        // weeks_ago has the smallest due_at, so it comes first
+        assert_eq!(strip[0].id, weeks_ago_id, "weeks-ago card sorts first (earliest due_at)");
+        // card1 (overdue -1s) sorts second
+        assert_eq!(strip[1].id, card1_id, "1-second-before-midnight card sorts second");
+        // card2 (today) sorts last
+        assert_eq!(strip[2].id, card2_id, "due-today card sorts last");
+
+        // All results have due_at <= last element's due_at (monotone ascending)
+        assert!(strip[0].due_at.unwrap() <= strip[strip.len() - 1].due_at.unwrap(), "results ordered by due_at ASC");
     }
 
     // -------------------------------------------------------------------------
