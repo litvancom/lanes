@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use crate::models::BoardWithMeta;
-use crate::api::workspace_api::ToggleStarBoard;
+use crate::api::workspace_api::{ToggleStarBoard, ArchiveBoard};
 
 /// Validate a board color as a 6-digit hex (`#rrggbb`).
 /// Returns a safe default rather than interpolating untrusted-shaped data
@@ -18,15 +18,13 @@ fn safe_hex(c: &str) -> &str {
 /// - Breadcrumb "Boards ›" (link to /)
 /// - Board title (17px/700) with a 14×14px solid color chip (radius 4px, T-03-17)
 /// - Star toggle button (optimistic local state, dispatches ToggleStarBoard)
-/// - Inert placeholders: Share, filter, labels toggle, overflow (Phase 4 activates)
+/// - Inert placeholders: Share, filter, labels toggle
+/// - Overflow menu with Archive action (inline-confirm pattern, UI-SPEC §Archive Confirmation)
 ///
 /// Threat mitigations:
 /// - T-03-17: `safe_hex` validates the board color before interpolating into inline style
 /// - T-03-20: `toggle_star_board` server fn enforces board membership before the UPDATE
-///
-/// NOTE: 03-06 will add an Archive action to the overflow menu — the overflow-menu
-/// structure is kept as a `<div class="lns-board-header-overflow">` placeholder
-/// so 03-06 can populate it without structural rework.
+/// - T-03-28: archive_board server fn enforces owner-only check regardless of UI render
 #[component]
 pub fn BoardHeader(board: BoardWithMeta) -> impl IntoView {
     // Validate the board color defensively (T-03-17)
@@ -50,6 +48,28 @@ pub fn BoardHeader(board: BoardWithMeta) -> impl IntoView {
     };
 
     let board_name = board.name.clone();
+
+    // ── Archive overflow action (inline-confirm, UI-SPEC §Archive Confirmation) ──
+    // Inline-confirm state: false = show "Archive", true = show "Confirm archive" + Cancel
+    let confirming_archive = RwSignal::new(false);
+    // Archive server action — on success navigate to workspace home
+    let archive_action = ServerAction::<ArchiveBoard>::new();
+    // Use StoredValue so the board_id can be cloned inside Fn (not FnOnce) closures
+    let board_id_sv = StoredValue::new(board.id.clone());
+
+    // Overflow menu open/close state
+    let overflow_open = RwSignal::new(false);
+
+    // Navigate to / after archive succeeds (archived board disappears from grid)
+    Effect::new(move |_| {
+        if matches!(archive_action.value().get(), Some(Ok(_))) {
+            // Navigate to workspace home — the archived board is now gone from the grid
+            let _ = leptos_router::hooks::use_navigate()(
+                "/",
+                leptos_router::NavigateOptions::default(),
+            );
+        }
+    });
 
     view! {
         <header class="lns-board-header">
@@ -112,12 +132,77 @@ pub fn BoardHeader(board: BoardWithMeta) -> impl IntoView {
                     "Labels"
                 </button>
 
-                // Overflow menu placeholder — 03-06 will add Archive action here
-                // Kept as a named div so 03-06 can populate without structural rework
+                // Overflow menu — Archive action with inline-confirm (UI-SPEC §Archive Confirmation)
                 <div class="lns-board-header-overflow">
-                    <button type="button" class="lns-icon-btn" disabled=true aria-label="Board options">
+                    // Overflow dots button — toggles the dropdown
+                    <button
+                        type="button"
+                        class="lns-icon-btn"
+                        aria-label="Board options"
+                        aria-expanded=move || overflow_open.get().to_string()
+                        on:click=move |_| {
+                            overflow_open.update(|v| *v = !*v);
+                            // Reset inline-confirm when reopening
+                            confirming_archive.set(false);
+                        }
+                    >
                         <crate::components::icon::Icon name="dots"/>
                     </button>
+
+                    // Dropdown menu — shown when overflow_open is true
+                    <Show when=move || overflow_open.get()>
+                        <div class="lns-overflow-menu" role="menu">
+                            // Archive item with inline-confirm (UI-SPEC §Archive Confirmation)
+                            <Show
+                                when=move || !confirming_archive.get()
+                                fallback=move || {
+                                    // Confirming state: "Confirm archive" + "Cancel"
+                                    view! {
+                                        <div class="lns-overflow-menu-confirm">
+                                            <button
+                                                type="button"
+                                                class="lns-overflow-item lns-overflow-item--danger"
+                                                role="menuitem"
+                                                on:click=move |_| {
+                                                    archive_action.dispatch(ArchiveBoard {
+                                                        board_id: board_id_sv.get_value(),
+                                                    });
+                                                    overflow_open.set(false);
+                                                    confirming_archive.set(false);
+                                                }
+                                            >
+                                                "Confirm archive"
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="lns-overflow-item"
+                                                role="menuitem"
+                                                on:click=move |_| {
+                                                    confirming_archive.set(false);
+                                                }
+                                            >
+                                                "Cancel"
+                                            </button>
+                                        </div>
+                                    }
+                                }
+                            >
+                                // Default state: "Archive" item
+                                <button
+                                    type="button"
+                                    class="lns-overflow-item"
+                                    role="menuitem"
+                                    on:click=move |_| {
+                                        // Enter inline-confirm mode (UI-SPEC: button → "Confirm archive" + Cancel)
+                                        confirming_archive.set(true);
+                                    }
+                                >
+                                    <crate::components::icon::Icon name="archive"/>
+                                    "Archive"
+                                </button>
+                            </Show>
+                        </div>
+                    </Show>
                 </div>
             </div>
         </header>

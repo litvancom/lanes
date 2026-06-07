@@ -6,6 +6,7 @@ use crate::routes::signup::SignupPage;
 use crate::routes::login::LoginPage;
 use crate::routes::invite::InviteAcceptPage;
 use crate::routes::board::BoardPage;
+use crate::routes::archive::ArchivePage;
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -35,6 +36,7 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/login") view=LoginPage/>
                 <Route path=path!("/invite/:token") view=InviteAcceptPage/>
                 <Route path=path!("/board/:id") view=BoardPage/>
+                <Route path=path!("/archive") view=ArchivePage/>
             </Routes>
         </Router>
     }

@@ -2056,3 +2056,132 @@ input, textarea {
   background: var(--bg-hover);
   color: var(--text);
 }
+
+/* =====================================================================
+   Archive page + board card archived variant (Plan 03-06)
+   Uses design tokens only — no raw hex.
+   ===================================================================== */
+
+/* Archive page header */
+.lns-archive-header {
+  margin-bottom: 24px;
+}
+
+.lns-archive-header .lns-workspace-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lns-archive-subtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+/* Archive grid — same layout as .lns-board-grid (4-col) */
+.lns-archive-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+/* Archived board card — muted variant (UI-SPEC §ArchivePage BoardCard variant) */
+.board-card--archived {
+  opacity: 0.6;
+}
+
+/* Grayscale the color header band (UI-SPEC: filter grayscale(0.7)) */
+.board-card--archived .board-card-header--archived {
+  filter: grayscale(0.7);
+}
+
+/* Archive action buttons row below the board-card body */
+.board-card-archive-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+/* Danger variant for Delete board button (UI-SPEC: color --danger) */
+.lns-btn--danger {
+  color: var(--danger);
+  background: transparent;
+  border-color: transparent;
+}
+.lns-btn--danger:hover {
+  background: oklch(96% 0.02 25);
+  border-color: oklch(90% 0.04 25);
+}
+
+/* Archive empty state */
+.lns-archive-empty {
+  padding: 40px;
+  text-align: center;
+}
+.lns-archive-empty-text {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* =====================================================================
+   Board header overflow menu (Plan 03-06)
+   ===================================================================== */
+
+/* Overflow menu container — relative positioning anchor for the dropdown */
+.lns-board-header-overflow {
+  position: relative;
+}
+
+/* Dropdown menu card */
+.lns-overflow-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 160px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  z-index: 50;
+  padding: 4px;
+}
+
+/* Individual overflow menu item */
+.lns-overflow-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: background .1s, color .1s;
+}
+.lns-overflow-item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.lns-overflow-item--danger {
+  color: var(--danger);
+}
+.lns-overflow-item--danger:hover {
+  background: oklch(96% 0.02 25);
+  color: var(--danger);
+}
+
+/* Inline confirm wrapper — two buttons stacked */
+.lns-overflow-menu-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
