@@ -68,7 +68,7 @@ pub fn WorkspaceTopbar(
     // --- ⌘K / Ctrl+K focus + Escape close (D-14, Pattern 2) ---
     let show_dropdown2 = show_dropdown;
     let search_ref2 = search_ref;
-    use_event_listener(use_window(), leptos::ev::keydown, move |e: leptos::ev::KeyboardEvent| {
+    let _ = use_event_listener(use_window(), leptos::ev::keydown, move |e: leptos::ev::KeyboardEvent| {
         if (e.meta_key() || e.ctrl_key()) && e.key() == "k" {
             e.prevent_default();
             if let Some(input) = search_ref2.get() {
