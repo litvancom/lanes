@@ -1,18 +1,17 @@
 use leptos::prelude::*;
 use leptos::form::ActionForm;
 use leptos_router::components::Redirect;
-use crate::api::workspace_api::{list_boards, AddBoard};
+use crate::api::workspace_api::{list_boards_with_meta, AddBoard};
 use crate::api::auth_api::{get_current_user, Logout};
 use crate::components::board_card::BoardCard;
-use crate::models::Board;
 
 #[component]
 pub fn WorkspacePage() -> impl IntoView {
     // Auth guard: check current user; redirect to /login if unauthenticated (D-12, Open Question 3)
     let current_user = Resource::new(|| (), |_| async { get_current_user().await });
 
-    // Server-prefetched Resource: calls list_boards during SSR, deserializes on client
-    let boards = Resource::new(|| (), |_| async { list_boards().await });
+    // Server-prefetched Resource: calls list_boards_with_meta during SSR, deserializes on client
+    let boards = Resource::new(|| (), |_| async { list_boards_with_meta().await });
 
     // ServerAction for the write interaction (D-11)
     let add_action = ServerAction::<AddBoard>::new();
@@ -88,7 +87,7 @@ pub fn WorkspacePage() -> impl IntoView {
                             </div>
                         </ActionForm>
 
-                        {move || add_action.value().get().map(|res: Result<Board, ServerFnError>| match res {
+                        {move || add_action.value().get().map(|res| match res {
                             Err(e) => view! { <p class="board-error">{e.to_string()}</p> }.into_any(),
                             Ok(_) => ().into_any(),
                         })}

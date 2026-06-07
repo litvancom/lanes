@@ -1462,3 +1462,597 @@ input, textarea {
   color: var(--text-muted);
   font-size: 13px;
 }
+
+/* =====================================================================
+   Workspace home layout shell (03-05)
+   ===================================================================== */
+
+/* Full-viewport grid: sidebar (248px) + main column */
+.lns-app {
+  display: grid;
+  grid-template-columns: 248px 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Main column (topbar + content scrollable area) */
+.lns-app-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Scrollable workspace content */
+.lns-workspace-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 32px 64px;
+}
+
+/* =====================================================================
+   WorkspaceSidebar (03-05)
+   Width 248px, bg --bg-sidebar
+   ===================================================================== */
+
+.lns-sidebar {
+  width: 248px;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+/* Logo row */
+.lns-sidebar-logo {
+  padding: 16px 16px 8px;
+  flex-shrink: 0;
+}
+
+/* Nav section */
+.lns-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px;
+  flex-shrink: 0;
+}
+
+/* Nav item — padding 7px 10px (handoff-locked, UI-SPEC) */
+.lns-sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  transition: background .1s, color .1s;
+  cursor: pointer;
+  user-select: none;
+}
+
+.lns-sidebar-item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* Active nav item — rgba(28,25,23,0.06) bg, --text */
+.lns-sidebar-item--active,
+.lns-sidebar-item.active {
+  background: rgba(28, 25, 23, 0.06);
+  color: var(--text);
+}
+
+/* Inert nav item — reduced affordance, no hover, cursor default (D-12) */
+.lns-sidebar-item--inert {
+  color: var(--text-muted);
+  cursor: default;
+}
+.lns-sidebar-item--inert:hover {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+/* Board list sections (STARRED, BOARDS) */
+.lns-sidebar-section {
+  flex-shrink: 0;
+  padding: 12px 8px 4px;
+}
+
+.lns-sidebar-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0 0 4px 10px;
+}
+
+/* Board row in sidebar (for starred section with star button) */
+.lns-sidebar-board-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Board link within sidebar */
+.lns-sidebar-board-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  min-width: 0;
+  transition: background .1s, color .1s;
+}
+.lns-sidebar-board-link:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* 14×14 color chip (handoff-locked size) */
+.lns-sidebar-chip {
+  flex-shrink: 0;
+}
+
+.lns-sidebar-board-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Star button inside sidebar board row */
+.lns-sidebar-star-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-xs);
+  color: var(--warning);
+  flex-shrink: 0;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity .1s;
+}
+.lns-sidebar-star-btn:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+}
+
+/* Sidebar footer (invite) */
+.lns-sidebar-footer {
+  margin-top: auto;
+  padding: 8px;
+  flex-shrink: 0;
+}
+
+.lns-sidebar-invite-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* =====================================================================
+   WorkspaceTopbar (03-05)
+   52px height, search 320px min-width
+   ===================================================================== */
+
+.lns-topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 52px;
+  padding: 0 16px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  position: relative;
+}
+
+/* Search field wrapper (positions the ⌘K chip inside) */
+.lns-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 320px;
+}
+
+/* Search input */
+.lns-search {
+  min-width: 320px;
+  width: 100%;
+  padding: 7px 40px 7px 12px;
+  background: var(--bg-subtle);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text);
+  outline: none;
+  transition: background .12s, border-color .12s;
+}
+.lns-search::placeholder {
+  color: var(--text-faint);
+}
+.lns-search:focus {
+  background: var(--bg-elevated);
+  border-color: var(--accent);
+}
+
+/* ⌘K chip */
+.lns-kbd {
+  position: absolute;
+  right: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-hover);
+  border-radius: var(--radius-xs);
+  padding: 2px 5px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* Search dropdown */
+.lns-search-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  max-height: 320px;
+  overflow-y: auto;
+  z-index: 50;
+}
+
+.lns-search-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 8px 12px 4px;
+  display: block;
+}
+
+/* Search result row */
+.lns-search-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  text-decoration: none;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+}
+.lns-search-result:hover,
+.lns-search-result:focus {
+  background: var(--bg-hover);
+  outline: none;
+}
+
+/* 12×12 chip in search results */
+.lns-search-chip {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.lns-search-result-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lns-search-result-key {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+/* Topbar right side */
+.lns-topbar-spacer {
+  flex: 1;
+}
+
+.lns-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Avatar initial bubble */
+.lns-avatar-bubble {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-inverse);
+  flex-shrink: 0;
+}
+
+/* =====================================================================
+   Extended BoardCard (03-05) — hover star, header band heights
+   ===================================================================== */
+
+/* Full-card link wrapper (replaces plain div for keyboard nav) */
+.board-card-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
+
+/* Relative wrapper for the header band (needed for absolute star/chip) */
+.board-card-header-wrap {
+  position: relative;
+}
+
+/* Large header band (100px) for recent variant */
+.board-card-header--large {
+  height: 100px;
+}
+
+/* Color chip — top-right of header band (absolute position) */
+.board-card-chip {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+/* Hover-revealed star button (28×28, top-left, opacity 0 → 1) */
+.board-card-star {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: var(--radius-xs);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.12s;
+  z-index: 2;
+}
+
+/* Reveal star on card hover */
+.board-card:hover .board-card-star {
+  opacity: 1;
+}
+
+.board-card-star--starred {
+  color: var(--warning);
+}
+
+/* =====================================================================
+   Workspace home grid sections (03-05)
+   ===================================================================== */
+
+/* Greeting header */
+.lns-greeting {
+  margin-bottom: 32px;
+}
+
+.lns-greeting-heading {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  margin: 0 0 4px;
+  line-height: 1.2;
+}
+
+.lns-greeting-date {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0 0 6px;
+}
+
+.lns-greeting-subtitle {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.lns-greeting-danger {
+  color: var(--danger);
+}
+
+/* Section headings */
+.lns-workspace-section {
+  margin-bottom: 24px;
+}
+
+.lns-workspace-section-heading {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0 0 12px;
+  letter-spacing: -0.005em;
+}
+
+/* All-boards 4-col grid */
+.lns-board-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+/* Recent boards 3-col grid */
+.lns-board-grid--recents {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+/* Dashed "Create board" tile (D-05, UI-SPEC CreateBoardTile) */
+.lns-create-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 120px;
+  background: rgba(28, 25, 23, 0.04);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  transition: background .12s, border-color .12s;
+}
+.lns-create-tile:hover {
+  background: rgba(28, 25, 23, 0.08);
+  border-color: var(--text-muted);
+}
+
+/* =====================================================================
+   TodayStrip (03-05)
+   White card, one row per due/overdue card
+   ===================================================================== */
+
+.lns-today-strip {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+/* Each row — links to /board/:id */
+.lns-today-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  text-decoration: none;
+  color: inherit;
+  border-bottom: 1px solid var(--border-subtle);
+  transition: background .1s;
+}
+.lns-today-row:last-child {
+  border-bottom: none;
+}
+.lns-today-row:hover {
+  background: var(--bg-hover);
+}
+
+/* 8px status dot */
+.lns-today-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.lns-today-dot--danger { background: var(--danger); }
+.lns-today-dot--warning { background: var(--warning); }
+
+/* Card title — 13px/500 */
+.lns-today-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Board name — 12px/400 --text-muted */
+.lns-today-board {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* Due pill — 11px/600 */
+.lns-today-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.lns-today-pill--danger {
+  color: var(--danger);
+  background: oklch(96% 0.02 25);
+}
+.lns-today-pill--warning {
+  color: var(--warning);
+  background: oklch(96% 0.02 70);
+}
+
+/* Generic button styles (ensure lns-btn exists for sidebar usage) */
+.lns-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+  font-family: inherit;
+  line-height: 1.3;
+  text-decoration: none;
+}
+
+.lns-btn--primary {
+  background: var(--text);
+  color: var(--text-inverse);
+  border-color: var(--text);
+}
+.lns-btn--primary:hover {
+  background: #000;
+  border-color: #000;
+}
+
+.lns-btn--ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: transparent;
+}
+.lns-btn--ghost:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}

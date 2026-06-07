@@ -9,3 +9,6 @@ pub mod modal;
 pub mod create_board_modal;
 pub mod kanban_list;
 pub mod board_header;
+pub mod sidebar;
+pub mod today_strip;
+pub mod topbar;
