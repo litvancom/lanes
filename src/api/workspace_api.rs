@@ -278,17 +278,30 @@ pub async fn search_boards_for_user(
 }
 
 /// Internal: fetch due-today and overdue non-done cards across the user's boards (D-02).
-/// `today_start` = epoch millis of today's midnight (server-local, UTC).
-/// `tomorrow_start` = today_start + 86_400_000.
-/// Cards with due_at in [today_start, tomorrow_start) are due today but not overdue.
-/// Cards with due_at < today_start are overdue.
+///
+/// ## All-time overdue policy (WORK-02 — intentional, no lower date bound)
+///
+/// A non-done card stays in the Today strip until it is marked done, regardless of how
+/// long ago it was due. There is intentionally NO lower bound on `c.due_at`.
+///
+/// Two cutoffs are used deliberately:
+/// - **Filter cutoff** (`tomorrow_start`): `WHERE c.due_at < tomorrow_start` — admits
+///   due-today cards AND all past-due cards (all-time overdue).
+/// - **Overdue CASE cutoff** (`today_start`): `CASE WHEN c.due_at < today_start THEN 1 ELSE 0 END`
+///   — flags only the strictly-before-today subset as `overdue = true`; cards due today
+///   are included in the strip but have `overdue = false`.
+///
+/// Do NOT add `AND c.due_at >= …` — that would break the all-time overdue contract.
+///
 /// Results ordered by due_at ASC, limited to 20.
 #[cfg(feature = "ssr")]
 pub async fn fetch_today_strip_inner(
     pool: &sqlx::SqlitePool,
     user_id: &str,
 ) -> Result<Vec<TodayCard>, sqlx::Error> {
-    let now = crate::server::now_millis().expect("clock error");
+    // Propagate clock errors instead of panicking (T-03-07-01).
+    let now = crate::server::now_millis()
+        .map_err(|e| sqlx::Error::Protocol(format!("Clock error: {e}")))?;
     let day_ms = 86_400_000i64;
     let today_start = (now / day_ms) * day_ms;
     let tomorrow_start = today_start + day_ms;
@@ -317,20 +330,20 @@ pub async fn fetch_today_strip_inner(
     .fetch_all(pool)
     .await?;
 
-    Ok(rows
-        .into_iter()
-        .map(|row| {
-            let overdue_int: i64 = row.try_get("overdue").unwrap_or(0);
-            TodayCard {
-                id: row.try_get("id").unwrap_or_default(),
-                title: row.try_get("title").unwrap_or_default(),
-                board_id: row.try_get("board_id").unwrap_or_default(),
-                board_name: row.try_get("board_name").unwrap_or_default(),
+    // Propagate decode errors instead of silently producing empty-string IDs (T-03-07-02).
+    rows.into_iter()
+        .map(|row| -> Result<TodayCard, sqlx::Error> {
+            let overdue_int: i64 = row.try_get("overdue")?;
+            Ok(TodayCard {
+                id: row.try_get("id")?,
+                title: row.try_get("title")?,
+                board_id: row.try_get("board_id")?,
+                board_name: row.try_get("board_name")?,
                 due_at: row.try_get("due_at").ok(),
                 overdue: overdue_int != 0,
-            }
+            })
         })
-        .collect())
+        .collect()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
