@@ -7,3 +7,5 @@ pub mod invite_panel;
 pub mod icon;
 pub mod modal;
 pub mod create_board_modal;
+pub mod kanban_list;
+pub mod board_header;

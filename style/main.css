@@ -944,3 +944,521 @@ input, textarea {
   color: var(--text-secondary);
   margin: 0;
 }
+
+/* ─────────────────────────────────────────────────────────
+   Board canvas (03-04)
+   ───────────────────────────────────────────────────────── */
+
+/* App shell placeholder — 03-05 wraps with sidebar + topbar */
+.lns-app-shell {
+  min-height: 100vh;
+  background: var(--bg-board);
+}
+
+/* Board page wrapper */
+.lns-board {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg-board);
+}
+
+/* Horizontal scroll canvas — 16px 20px padding, 12px list gap */
+.lns-board-canvas {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 20px;
+  overflow-x: auto;
+  position: relative;
+}
+
+/* ─────────────────────────────────────────────────────────
+   Board header (03-04)
+   ───────────────────────────────────────────────────────── */
+
+.lns-board-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 24px;
+  height: 52px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.lns-board-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.lns-board-breadcrumb-link {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.lns-board-breadcrumb-link:hover {
+  color: var(--text-secondary);
+  text-decoration: underline;
+}
+
+.lns-board-breadcrumb-sep {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.lns-board-title-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 14×14px solid color chip (handoff-locked size), radius 4px */
+.lns-board-color-chip {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.lns-board-title {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--text);
+  margin: 0;
+}
+
+/* Star button — 28×28px touch target */
+.lns-star-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-xs);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.lns-star-btn:hover {
+  background: var(--bg-hover);
+}
+.lns-star-btn--starred {
+  color: var(--warning);
+}
+
+.lns-board-header-spacer {
+  flex: 1;
+}
+
+.lns-board-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Icon-only button for overflow dots in header */
+.lns-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-xs);
+  color: var(--text-muted);
+}
+.lns-icon-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+/* ─────────────────────────────────────────────────────────
+   KanbanList (03-04)
+   ───────────────────────────────────────────────────────── */
+
+/* 280px wide, --bg-list, --radius-md */
+.lns-list {
+  width: 280px;
+  min-width: 280px;
+  background: var(--bg-list);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  max-height: calc(100vh - 52px - 32px);
+  overflow: hidden;
+}
+
+.lns-list-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px;
+  position: relative;
+}
+
+/* List title — 13px/700, click → rename input */
+.lns-list-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  flex: 1;
+  cursor: pointer;
+  padding: 3px 6px;
+  border-radius: var(--radius-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lns-list-title:hover {
+  background: rgba(28, 25, 23, 0.05);
+}
+
+/* Rename input — border 1px var(--accent), padding 3px 6px (handoff-locked) */
+.lns-list-title-input {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  flex: 1;
+  padding: 3px 6px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-xs);
+  background: var(--bg-elevated);
+  outline: none;
+  min-width: 0;
+}
+
+/* Count pill — 11px/600, muted bg */
+.lns-list-count {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 10px;
+  padding: 1px 6px;
+  flex-shrink: 0;
+}
+
+/* Overflow dots button */
+.lns-list-menu-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-xs);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.lns-list-menu-btn:hover {
+  background: rgba(28, 25, 23, 0.07);
+}
+
+/* Overflow menu — small floating card */
+.lns-list-menu {
+  position: absolute;
+  top: calc(100% - 4px);
+  right: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  z-index: 20;
+  min-width: 140px;
+  padding: 4px 0;
+}
+
+.lns-list-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+.lns-list-menu-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.lns-list-menu-item--disabled,
+.lns-list-menu-item:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+/* Cards area — gap 6px (handoff-locked), padding 4px 8px */
+.lns-list-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 8px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* List footer */
+.lns-list-footer {
+  padding: 4px 8px 8px;
+}
+
+/* "Add a card" stub button (Phase 4 activates) */
+.lns-add-card-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  padding: 4px 6px;
+  border-radius: var(--radius-xs);
+  text-align: left;
+  cursor: not-allowed;
+}
+
+/* ─────────────────────────────────────────────────────────
+   CardStub (03-04 — title only, D-08)
+   ───────────────────────────────────────────────────────── */
+
+/* White card, border, padding 8px 10px */
+.lns-card,
+.lns-card-stub {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  padding: 8px 10px;
+}
+
+.lns-card-stub-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.35;
+  display: block;
+}
+
+/* ─────────────────────────────────────────────────────────
+   AddListComposer (03-04)
+   ───────────────────────────────────────────────────────── */
+
+.lns-add-list-composer-wrap {
+  flex-shrink: 0;
+}
+
+/* Dashed "Add another list" button — 280px */
+.lns-add-list-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 280px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: rgba(28, 25, 23, 0.04);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  cursor: pointer;
+  min-height: 48px;
+}
+.lns-add-list-btn:hover {
+  background: rgba(28, 25, 23, 0.07);
+  border-color: var(--text-muted);
+}
+
+/* Expanded composer */
+.lns-add-list-composer {
+  width: 280px;
+  background: var(--bg-list);
+  border-radius: var(--radius-md);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lns-add-list-input {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 8px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-xs);
+  background: var(--bg-elevated);
+  outline: none;
+  width: 100%;
+}
+
+.lns-add-list-composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.lns-btn--sm {
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: var(--radius-xs);
+}
+
+.lns-add-list-cancel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-xs);
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+}
+.lns-add-list-cancel:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* ─────────────────────────────────────────────────────────
+   EmptyBoardCard (03-04 — first-run state)
+   ───────────────────────────────────────────────────────── */
+
+/* Centered 540px card, top 200px from canvas */
+.lns-empty-board-card {
+  position: absolute;
+  left: 50%;
+  top: 200px;
+  transform: translateX(-50%);
+  width: 540px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: 32px;
+  text-align: center;
+  z-index: 2;
+}
+
+/* Icon tile — 56×56px, accent-soft bg */
+.lns-empty-board-icon-tile {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 16px;
+}
+
+/* Heading — 19px/700 (handoff-locked size, README §03) */
+.lns-empty-board-heading {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--text);
+  margin: 0 0 8px;
+}
+
+.lns-empty-board-subtitle {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  margin: 0 0 20px;
+}
+
+.lns-empty-board-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+/* POPULAR TEMPLATES divider */
+.lns-empty-board-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.lns-empty-board-divider::before,
+.lns-empty-board-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.lns-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+/* Template tiles in empty board card */
+.lns-empty-board-templates {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.lns-template-tile-preview {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 2px 0 0;
+}
+
+/* Decorative ghost list rectangles */
+.lns-empty-ghost-lists {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 20px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.lns-empty-ghost-list {
+  width: 280px;
+  min-height: 300px;
+  background: var(--bg-list);
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+}
+.lns-empty-ghost-list--1 { opacity: 0.4; }
+.lns-empty-ghost-list--2 { opacity: 0.25; }
+.lns-empty-ghost-list--3 { opacity: 0.15; }
+
+/* Board loading fallback */
+.lns-board-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
