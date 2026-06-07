@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use leptos::form::ActionForm;
 use crate::api::auth_api::Signup;
+use crate::components::logo::LogoMark;
 
 /// Signup page component: two-panel layout per UI-SPEC (D-16).
 /// Uses .lns-* CSS class names so Plan 02's stylesheet binds without markup churn.
@@ -58,14 +59,9 @@ pub fn SignupPage() -> impl IntoView {
     view! {
         <div class="lns-screen">
             // Form panel (left)
-            <div class="lns-auth-panel-form">
-                <div class="lns-auth-logo">
-                    <div class="lns-logo-mark">
-                        <span class="lns-logo-bar lns-logo-bar--short"></span>
-                        <span class="lns-logo-bar lns-logo-bar--full"></span>
-                        <span class="lns-logo-bar lns-logo-bar--accent"></span>
-                    </div>
-                    <span class="lns-logo-wordmark">"Lanes"</span>
+            <div class="lns-auth-form-panel">
+                <div class="lns-auth-logo-row">
+                    <LogoMark/>
                 </div>
 
                 <div class="lns-auth-form-content">
@@ -148,13 +144,13 @@ pub fn SignupPage() -> impl IntoView {
                     </p>
                 </div>
 
-                <footer class="lns-auth-footer-nav">
+                <footer class="lns-auth-footer">
                     <span class="lns-version">"Lanes v0.1"</span>
                 </footer>
             </div>
 
             // Brand panel (right, decorative — same as login per D-16)
-            <div class="lns-auth-panel-brand">
+            <div class="lns-auth-brand-panel">
                 <p class="lns-brand-tagline">"The kanban that respects your time."</p>
             </div>
         </div>
