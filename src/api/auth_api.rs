@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use crate::auth::models::AuthUser;
+use crate::auth::models::CurrentUser;
 
 /// Internal: signup validation + user creation. Returns new user id.
 /// Separated for testability independent of Leptos context machinery (workspace_api.rs pattern).
@@ -184,10 +184,15 @@ pub async fn logout() -> Result<(), ServerFnError> {
     Ok(())
 }
 
-/// Return the currently authenticated user, or None if not logged in.
+/// Return the currently authenticated user as a client-safe DTO, or None if not logged in.
+///
+/// Returns `CurrentUser` (id, email, display_name, avatar_color only) — credentials and
+/// internal fields (password_hash, auth_provider, created_at) are intentionally dropped
+/// and never serialized into the server-function response (AUTH-04 / CR-01).
+///
 /// Used by workspace and route guards to decide whether to redirect (RESEARCH Pattern 5).
 #[server]
-pub async fn get_current_user() -> Result<Option<AuthUser>, ServerFnError> {
+pub async fn get_current_user() -> Result<Option<CurrentUser>, ServerFnError> {
     use crate::auth::AuthSession;
     use leptos_axum::extract;
 
@@ -195,5 +200,10 @@ pub async fn get_current_user() -> Result<Option<AuthUser>, ServerFnError> {
         .await
         .map_err(|_| ServerFnError::new("Session error"))?;
 
-    Ok(auth_session.user)
+    Ok(auth_session.user.map(|u| CurrentUser {
+        id: u.id,
+        email: u.email,
+        display_name: u.display_name,
+        avatar_color: u.avatar_color,
+    }))
 }
