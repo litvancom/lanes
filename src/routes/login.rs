@@ -230,11 +230,22 @@ pub fn LoginPage() -> impl IntoView {
 /// Only permits relative paths that:
 /// - Begin with exactly one `/`
 /// - Do NOT begin with `//` (which browsers treat as protocol-relative and may redirect off-domain)
-/// - Do NOT contain `:` before the first `/` (no URL schemes like `http:`)
+/// - Do NOT contain `:` (no URL schemes like `http:`)
+/// - Do NOT contain `\` (browsers normalize backslashes to `/`, so `/\evil.com` is protocol-relative)
+/// - Do NOT contain a percent-encoded `/` or `\` (`%2f`, `%5c`), which would otherwise smuggle a
+///   protocol-relative prefix past the literal `//` check after the browser decodes it
 ///
-/// Anything else defaults to `/` (workspace root).
+/// Anything failing these checks defaults to `/` (workspace root). We reject (rather than decode
+/// then re-validate) to avoid pulling in a percent-decoding dependency.
 fn sanitize_return_path(raw: &str) -> String {
-    if raw.starts_with('/') && !raw.starts_with("//") && !raw.contains(':') {
+    let lower = raw.to_ascii_lowercase();
+    let ok = raw.starts_with('/')
+        && !raw.starts_with("//")
+        && !raw.contains('\\')
+        && !raw.contains(':')
+        && !lower.contains("%2f")
+        && !lower.contains("%5c");
+    if ok {
         raw.to_string()
     } else {
         "/".to_string()
