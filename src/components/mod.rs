@@ -5,3 +5,5 @@ pub mod form_field;
 pub mod error_banner;
 pub mod invite_panel;
 pub mod icon;
+pub mod modal;
+pub mod create_board_modal;

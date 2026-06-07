@@ -49,6 +49,7 @@ hydrate = [
     "dep:wasm-bindgen",
 ]
 ssr = [
+    "leptos-use/ssr",
     "dep:uuid",
     "dep:leptos_axum",
     "dep:axum",
