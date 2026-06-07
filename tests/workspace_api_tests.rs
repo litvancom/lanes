@@ -8,8 +8,6 @@ mod workspace_api_tests {
     use lanes::server::db::{init_pools, run_migrations};
     use lanes::api::workspace_api::{
         create_board, derive_key_prefix,
-        fetch_boards_for_user,
-        BOARD_COLOR_SWATCHES,
         create_board_from_template,
         BoardTemplate,
         toggle_star_inner,

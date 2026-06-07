@@ -121,7 +121,7 @@ mod api_tests {
 
         let creator_id = insert_user_direct(&write_pool, "creator@test.com").await;
 
-        let board = create_board(&write_pool, "Test Board".to_string(), &creator_id)
+        let board = create_board(&write_pool, "Test Board".to_string(), "#7c5cff".to_string(), &creator_id)
             .await
             .expect("create_board should succeed");
 
@@ -160,7 +160,7 @@ mod api_tests {
             .expect("pragma");
 
         // Use a non-existent creator_id to trigger FK violation on board_members insert
-        let result = create_board(&write_pool, "Orphan Board".to_string(), "non-existent-user-id")
+        let result = create_board(&write_pool, "Orphan Board".to_string(), "#7c5cff".to_string(), "non-existent-user-id")
             .await;
 
         // Should fail (FK violation)
@@ -184,7 +184,7 @@ mod api_tests {
         let (_file, write_pool, _read_pool) = test_db().await;
         let creator_id = insert_user_direct(&write_pool, "user@test.com").await;
 
-        let result = create_board(&write_pool, "".to_string(), &creator_id).await;
+        let result = create_board(&write_pool, "".to_string(), "#7c5cff".to_string(), &creator_id).await;
         assert!(result.is_err(), "empty name should return Err");
         assert!(
             result.unwrap_err().contains("empty"),
@@ -204,7 +204,7 @@ mod api_tests {
         let (_file, write_pool, _read_pool) = test_db().await;
         let creator_id = insert_user_direct(&write_pool, "user@test.com").await;
 
-        let result = create_board(&write_pool, "   ".to_string(), &creator_id).await;
+        let result = create_board(&write_pool, "   ".to_string(), "#7c5cff".to_string(), &creator_id).await;
         assert!(result.is_err(), "whitespace-only name should return Err");
 
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM boards")
@@ -221,7 +221,7 @@ mod api_tests {
         let creator_id = insert_user_direct(&write_pool, "user@test.com").await;
 
         let long_name = "A".repeat(121);
-        let result = create_board(&write_pool, long_name, &creator_id).await;
+        let result = create_board(&write_pool, long_name, "#7c5cff".to_string(), &creator_id).await;
         assert!(result.is_err(), "name > 120 chars should return Err");
 
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM boards")
