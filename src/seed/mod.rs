@@ -116,6 +116,38 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
     .await?;
 
     // ------------------------------------------------------------------
+    // User: Alex (demo co-member, no password — password_hash nullable)
+    // ------------------------------------------------------------------
+    let alex_id = Uuid::now_v7().to_string();
+    sqlx::query(
+        "INSERT INTO users (id, email, password_hash, display_name, avatar_color, auth_provider, created_at) \
+         VALUES (?, ?, NULL, ?, ?, 'password', ?)",
+    )
+    .bind(&alex_id)
+    .bind("alex@example.com")
+    .bind("Alex")
+    .bind("#0ea5e9")
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+
+    // ------------------------------------------------------------------
+    // User: Jamie (demo co-member, no password — password_hash nullable)
+    // ------------------------------------------------------------------
+    let jamie_id = Uuid::now_v7().to_string();
+    sqlx::query(
+        "INSERT INTO users (id, email, password_hash, display_name, avatar_color, auth_provider, created_at) \
+         VALUES (?, ?, NULL, ?, ?, 'password', ?)",
+    )
+    .bind(&jamie_id)
+    .bind("jamie@example.com")
+    .bind("Jamie")
+    .bind("#10b981")
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+
+    // ------------------------------------------------------------------
     // Board: "Home & Life" (D-09)
     // ------------------------------------------------------------------
     let board_id = Uuid::now_v7().to_string();
@@ -147,12 +179,19 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
     // ------------------------------------------------------------------
     // Lists: Inbox / This week / In progress / Done  (D-09)
     // Positions generated with FractionalIndex::default() then new_after.
+    // D-13: "Done" list has is_done_list = 1.
     // ------------------------------------------------------------------
-    let list_names = ["Inbox", "This week", "In progress", "Done"];
+    // (name, is_done_list)
+    let list_defs: [(&str, i64); 4] = [
+        ("Inbox",       0),
+        ("This week",   0),
+        ("In progress", 0),
+        ("Done",        1),  // D-13: done-list flag
+    ];
     let mut list_ids: Vec<String> = Vec::with_capacity(4);
     let mut prev_pos = FractionalIndex::default();
 
-    for (i, name) in list_names.iter().enumerate() {
+    for (i, (name, is_done_list)) in list_defs.iter().enumerate() {
         let list_id = Uuid::now_v7().to_string();
         let pos = if i == 0 {
             FractionalIndex::default()
@@ -162,12 +201,13 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
         let pos_str = pos.to_string();
 
         sqlx::query(
-            "INSERT INTO lists (id, board_id, name, position, archived) VALUES (?, ?, ?, ?, 0)",
+            "INSERT INTO lists (id, board_id, name, position, archived, is_done_list) VALUES (?, ?, ?, ?, 0, ?)",
         )
         .bind(&list_id)
         .bind(&board_id)
         .bind(name)
         .bind(&pos_str)
+        .bind(is_done_list)
         .execute(&mut *tx)
         .await?;
 
@@ -178,29 +218,42 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
     // list_ids[0] = Inbox, [1] = This week, [2] = In progress, [3] = Done
 
     // ------------------------------------------------------------------
-    // Labels (2) — board-scoped (D-09)
+    // Labels (8) — board-scoped design-ref label set (D-09, UI-SPEC label table)
+    // Colors are the resolved oklch values from --label-* CSS tokens.
     // ------------------------------------------------------------------
-    let label_urgent_id = Uuid::now_v7().to_string();
-    sqlx::query(
-        "INSERT INTO labels (id, board_id, name, color) VALUES (?, ?, ?, ?)",
-    )
-    .bind(&label_urgent_id)
-    .bind(&board_id)
-    .bind("Urgent")
-    .bind("oklch(0.65 0.25 25)")
-    .execute(&mut *tx)
-    .await?;
+    // (name, color)
+    let label_defs: [(&str, &str); 8] = [
+        ("urgent",  "oklch(72% 0.10 25)"),
+        ("errand",  "oklch(74% 0.10 60)"),
+        ("health",  "oklch(72% 0.09 150)"),
+        ("finance", "oklch(68% 0.10 295)"),
+        ("family",  "oklch(74% 0.09 350)"),
+        ("travel",  "oklch(70% 0.07 200)"),
+        ("home",    "oklch(68% 0.10 240)"),
+        ("someday", "oklch(72% 0.005 0)"),
+    ];
 
-    let label_home_id = Uuid::now_v7().to_string();
-    sqlx::query(
-        "INSERT INTO labels (id, board_id, name, color) VALUES (?, ?, ?, ?)",
-    )
-    .bind(&label_home_id)
-    .bind(&board_id)
-    .bind("Home")
-    .bind("oklch(0.65 0.2 145)")
-    .execute(&mut *tx)
-    .await?;
+    let mut label_ids: Vec<String> = Vec::with_capacity(8);
+    for (name, color) in &label_defs {
+        let lid = Uuid::now_v7().to_string();
+        sqlx::query(
+            "INSERT INTO labels (id, board_id, name, color) VALUES (?, ?, ?, ?)",
+        )
+        .bind(&lid)
+        .bind(&board_id)
+        .bind(name)
+        .bind(color)
+        .execute(&mut *tx)
+        .await?;
+        label_ids.push(lid);
+    }
+    // label_ids indices: 0=urgent, 1=errand, 2=health, 3=finance, 4=family, 5=travel, 6=home, 7=someday
+    let label_urgent_id  = &label_ids[0];
+    let label_errand_id  = &label_ids[1];
+    let label_finance_id = &label_ids[3];
+    let label_family_id  = &label_ids[4];
+    let label_travel_id  = &label_ids[5];
+    let label_home_id    = &label_ids[6];
 
     // ------------------------------------------------------------------
     // Cards — 8 cards spread across lists, card_num 1-8 (D-02, D-09)
@@ -219,7 +272,7 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
         pos
     }
 
-    // Card 1: Inbox — "Buy groceries", P3, Home label
+    // Card 1: Inbox — "Buy groceries", P3 (design-ref: home label)
     let card1_id = Uuid::now_v7().to_string();
     let pos1 = next_card_position(&mut last_card_pos[0]);
     sqlx::query(
@@ -241,7 +294,7 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
     .execute(&mut *tx)
     .await?;
 
-    // Card 2: Inbox — "Call plumber", P1, Urgent label
+    // Card 2: Inbox — "Call plumber", P1, urgent label
     let card2_id = Uuid::now_v7().to_string();
     let pos2 = next_card_position(&mut last_card_pos[0]);
     sqlx::query(
@@ -285,35 +338,38 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
     .execute(&mut *tx)
     .await?;
 
-    // Card 4: This week — "Research new laptop", P3, Home label, due
+    // Card 4: This week — "File expense reports", P1, finance label, 2 attachments
+    // (design-ref c7: finance, P1, soon due, 2 attachments, me member)
     let card4_id = Uuid::now_v7().to_string();
     let pos4 = next_card_position(&mut last_card_pos[1]);
     sqlx::query(
         "INSERT INTO cards (id, list_id, board_id, card_num, title, description, position, \
-         priority, due_at, done, archived, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)",
+         priority, due_at, attachment_count, done, archived, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)",
     )
     .bind(&card4_id)
     .bind(&list_ids[1])
     .bind(&board_id)
     .bind(4_i64)
-    .bind("Research new laptop")
-    .bind("Check specs and prices")
+    .bind("File expense reports")
+    .bind("Q3 receipts")
     .bind(pos4.to_string())
-    .bind("P3")
-    .bind(now + 5 * 24 * 3600 * 1000_i64) // due in 5 days
+    .bind("P1")
+    .bind(now + 3 * 24 * 3600 * 1000_i64) // due soon
+    .bind(2_i64) // attachment_count
     .bind(now)
     .bind(now)
     .execute(&mut *tx)
     .await?;
 
-    // Card 5: In progress — "Fix garage door", P1, Urgent label, member
+    // Card 5: In progress — "Fix garage door", P1, urgent+home labels, 1 comment, me member
+    // (design-ref c9: urgent+home, P1, overdue/due today, 1 comment, me)
     let card5_id = Uuid::now_v7().to_string();
     let pos5 = next_card_position(&mut last_card_pos[2]);
     sqlx::query(
         "INSERT INTO cards (id, list_id, board_id, card_num, title, description, position, \
-         priority, due_at, done, archived, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)",
+         priority, due_at, comment_count, done, archived, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)",
     )
     .bind(&card5_id)
     .bind(&list_ids[2])
@@ -323,19 +379,21 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
     .bind("Spring is broken")
     .bind(pos5.to_string())
     .bind("P1")
-    .bind(now + 3 * 24 * 3600 * 1000_i64)
+    .bind(now) // due today (overdue tone in UI)
+    .bind(1_i64) // comment_count
     .bind(now)
     .bind(now)
     .execute(&mut *tx)
     .await?;
 
-    // Card 6: In progress — "Plan holiday menu", P2, checklist + comment
+    // Card 6: In progress — "Plan holiday menu", P2, home+errand labels, cover, checklist 3/8, 1 comment, me+alex
+    // (design-ref c6: cover #f5e6d3, home+errand, P2, soon due, 3/8 checklist, 1 comment, me+al)
     let card6_id = Uuid::now_v7().to_string();
     let pos6 = next_card_position(&mut last_card_pos[2]);
     sqlx::query(
-        "INSERT INTO cards (id, list_id, board_id, card_num, title, description, position, \
-         priority, due_at, done, archived, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)",
+        "INSERT INTO cards (id, list_id, board_id, card_num, title, description, cover, position, \
+         priority, due_at, checklist_done, checklist_total, comment_count, done, archived, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)",
     )
     .bind(&card6_id)
     .bind(&list_ids[2])
@@ -343,37 +401,48 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
     .bind(6_i64)
     .bind("Plan holiday menu")
     .bind("Thanksgiving menu planning")
+    .bind("#f5e6d3") // cover
     .bind(pos6.to_string())
     .bind("P2")
-    .bind(now + 7 * 24 * 3600 * 1000_i64)
+    .bind(now + 7 * 24 * 3600 * 1000_i64) // due soon
+    .bind(3_i64) // checklist_done
+    .bind(8_i64) // checklist_total
+    .bind(1_i64) // comment_count
     .bind(now)
     .bind(now)
     .execute(&mut *tx)
     .await?;
 
-    // Card 7: Done — "Order birthday cake", done=1
+    // Card 7: In progress — "Plan Lisbon trip", P2, travel+family labels, cover #d6e4e8,
+    //         checklist 6/11, 8 comments, 4 attachments, me+alex+jamie
+    // (design-ref c11: cover #d6e4e8, travel+family, P2, normal due, 6/11, 8 comments, 4 attachments, me+al+ja)
     let card7_id = Uuid::now_v7().to_string();
-    let pos7 = next_card_position(&mut last_card_pos[3]);
+    let pos7 = next_card_position(&mut last_card_pos[2]);
     sqlx::query(
-        "INSERT INTO cards (id, list_id, board_id, card_num, title, description, position, \
-         priority, due_at, done, archived, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)",
+        "INSERT INTO cards (id, list_id, board_id, card_num, title, description, cover, position, \
+         priority, due_at, checklist_done, checklist_total, comment_count, attachment_count, done, archived, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)",
     )
     .bind(&card7_id)
-    .bind(&list_ids[3])
+    .bind(&list_ids[2])
     .bind(&board_id)
     .bind(7_i64)
-    .bind("Order birthday cake")
-    .bind(Option::<String>::None)
+    .bind("Plan Lisbon trip")
+    .bind("Summer vacation planning")
+    .bind("#d6e4e8") // cover
     .bind(pos7.to_string())
     .bind("P2")
-    .bind(Option::<i64>::None)
+    .bind(now + 30 * 24 * 3600 * 1000_i64) // due in 30 days
+    .bind(6_i64)  // checklist_done
+    .bind(11_i64) // checklist_total
+    .bind(8_i64)  // comment_count
+    .bind(4_i64)  // attachment_count
     .bind(now)
     .bind(now)
     .execute(&mut *tx)
     .await?;
 
-    // Card 8: Done — "Pay electricity bill", done=1
+    // Card 8: Done — "Order birthday cake", done=1
     let card8_id = Uuid::now_v7().to_string();
     let pos8 = next_card_position(&mut last_card_pos[3]);
     sqlx::query(
@@ -385,9 +454,31 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
     .bind(&list_ids[3])
     .bind(&board_id)
     .bind(8_i64)
-    .bind("Pay electricity bill")
+    .bind("Order birthday cake")
     .bind(Option::<String>::None)
     .bind(pos8.to_string())
+    .bind("P2")
+    .bind(Option::<i64>::None)
+    .bind(now)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+
+    // Card 9: Done — "Pay electricity bill", done=1
+    let card9_id = Uuid::now_v7().to_string();
+    let pos9 = next_card_position(&mut last_card_pos[3]);
+    sqlx::query(
+        "INSERT INTO cards (id, list_id, board_id, card_num, title, description, position, \
+         priority, due_at, done, archived, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)",
+    )
+    .bind(&card9_id)
+    .bind(&list_ids[3])
+    .bind(&board_id)
+    .bind(9_i64)
+    .bind("Pay electricity bill")
+    .bind(Option::<String>::None)
+    .bind(pos9.to_string())
     .bind(Option::<String>::None)
     .bind(Option::<i64>::None)
     .bind(now)
@@ -395,9 +486,9 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
     .execute(&mut *tx)
     .await?;
 
-    // Update next_card_num to 9 (past all seeded cards)
+    // Update next_card_num to 10 (past all 9 seeded cards)
     sqlx::query("UPDATE boards SET next_card_num = ? WHERE id = ?")
-        .bind(9_i64)
+        .bind(10_i64)
         .bind(&board_id)
         .execute(&mut *tx)
         .await?;
@@ -405,31 +496,63 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
     // ------------------------------------------------------------------
     // card_labels links (D-09)
     // ------------------------------------------------------------------
-    // Card 1 (Buy groceries) → Home label
+    // Card 1 (Buy groceries) → home label
     sqlx::query("INSERT INTO card_labels (card_id, label_id) VALUES (?, ?)")
         .bind(&card1_id)
-        .bind(&label_home_id)
+        .bind(label_home_id)
         .execute(&mut *tx)
         .await?;
 
-    // Card 2 (Call plumber) → Urgent label
+    // Card 2 (Call plumber) → urgent label
     sqlx::query("INSERT INTO card_labels (card_id, label_id) VALUES (?, ?)")
         .bind(&card2_id)
-        .bind(&label_urgent_id)
+        .bind(label_urgent_id)
         .execute(&mut *tx)
         .await?;
 
-    // Card 5 (Fix garage door) → Urgent label
-    sqlx::query("INSERT INTO card_labels (card_id, label_id) VALUES (?, ?)")
-        .bind(&card5_id)
-        .bind(&label_urgent_id)
-        .execute(&mut *tx)
-        .await?;
-
-    // Card 4 (Research new laptop) → Home label
+    // Card 4 (File expense reports) → finance label
     sqlx::query("INSERT INTO card_labels (card_id, label_id) VALUES (?, ?)")
         .bind(&card4_id)
-        .bind(&label_home_id)
+        .bind(label_finance_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // Card 5 (Fix garage door) → urgent + home labels
+    // (design-ref c9: urgent, home)
+    sqlx::query("INSERT INTO card_labels (card_id, label_id) VALUES (?, ?)")
+        .bind(&card5_id)
+        .bind(label_urgent_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("INSERT INTO card_labels (card_id, label_id) VALUES (?, ?)")
+        .bind(&card5_id)
+        .bind(label_home_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // Card 6 (Plan holiday menu) → home + errand labels
+    // (design-ref c6: home, errand)
+    sqlx::query("INSERT INTO card_labels (card_id, label_id) VALUES (?, ?)")
+        .bind(&card6_id)
+        .bind(label_home_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("INSERT INTO card_labels (card_id, label_id) VALUES (?, ?)")
+        .bind(&card6_id)
+        .bind(label_errand_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // Card 7 (Plan Lisbon trip) → travel + family labels
+    // (design-ref c11: travel, family)
+    sqlx::query("INSERT INTO card_labels (card_id, label_id) VALUES (?, ?)")
+        .bind(&card7_id)
+        .bind(label_travel_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("INSERT INTO card_labels (card_id, label_id) VALUES (?, ?)")
+        .bind(&card7_id)
+        .bind(label_family_id)
         .execute(&mut *tx)
         .await?;
 
@@ -476,6 +599,7 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
     // ------------------------------------------------------------------
     // Comments (D-09)
     // ------------------------------------------------------------------
+    // Card 5 (Fix garage door) — 1 comment (design-ref c9)
     let comment1_id = Uuid::now_v7().to_string();
     sqlx::query(
         "INSERT INTO comments (id, card_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -488,6 +612,7 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
     .execute(&mut *tx)
     .await?;
 
+    // Card 6 (Plan holiday menu) — 1 comment (design-ref c6)
     let comment2_id = Uuid::now_v7().to_string();
     sqlx::query(
         "INSERT INTO comments (id, card_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -502,16 +627,60 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
 
     // ------------------------------------------------------------------
     // card_members (D-09)
+    // Alex and Jamie are board members too (for card_members FK to users)
     // ------------------------------------------------------------------
+    // Add Alex and Jamie as board members (so they can be card members)
+    sqlx::query(
+        "INSERT INTO board_members (board_id, user_id, role) VALUES (?, ?, ?)",
+    )
+    .bind(&board_id)
+    .bind(&alex_id)
+    .bind("member")
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        "INSERT INTO board_members (board_id, user_id, role) VALUES (?, ?, ?)",
+    )
+    .bind(&board_id)
+    .bind(&jamie_id)
+    .bind("member")
+    .execute(&mut *tx)
+    .await?;
+
+    // Card 5 (Fix garage door): me only (design-ref c9: me)
     sqlx::query("INSERT INTO card_members (card_id, user_id) VALUES (?, ?)")
         .bind(&card5_id)
         .bind(&user_id)
         .execute(&mut *tx)
         .await?;
 
+    // Card 6 (Plan holiday menu): me + alex (design-ref c6: me, al)
     sqlx::query("INSERT INTO card_members (card_id, user_id) VALUES (?, ?)")
         .bind(&card6_id)
         .bind(&user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("INSERT INTO card_members (card_id, user_id) VALUES (?, ?)")
+        .bind(&card6_id)
+        .bind(&alex_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // Card 7 (Plan Lisbon trip): me + alex + jamie (design-ref c11: me, al, ja)
+    sqlx::query("INSERT INTO card_members (card_id, user_id) VALUES (?, ?)")
+        .bind(&card7_id)
+        .bind(&user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("INSERT INTO card_members (card_id, user_id) VALUES (?, ?)")
+        .bind(&card7_id)
+        .bind(&alex_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("INSERT INTO card_members (card_id, user_id) VALUES (?, ?)")
+        .bind(&card7_id)
+        .bind(&jamie_id)
         .execute(&mut *tx)
         .await?;
 

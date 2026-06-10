@@ -277,4 +277,123 @@ mod seed_tests {
             "first list (by position) should be 'Inbox'"
         );
     }
+
+    // ---------------------------------------------------------------------------
+    // Phase 4 seed assertions (Plan 04-01)
+    // ---------------------------------------------------------------------------
+
+    /// Exactly one list has is_done_list = 1 (the "Done" list — D-13).
+    #[tokio::test]
+    async fn seed_has_exactly_one_done_list() {
+        let (_file, url) = temp_db_url();
+        let pool = make_write_pool(&url).await.expect("write pool");
+        run_migrations(&pool).await.expect("migrations");
+
+        lanes::seed::run_seed(&pool)
+            .await
+            .expect("run_seed on empty DB");
+
+        let (done_list_count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM lists WHERE is_done_list = 1")
+                .fetch_one(&pool)
+                .await
+                .expect("count done lists");
+        assert_eq!(
+            done_list_count, 1,
+            "expected exactly 1 done list, got {}",
+            done_list_count
+        );
+    }
+
+    /// Exactly 8 labels are seeded for the board (the design-ref label set).
+    #[tokio::test]
+    async fn seed_has_8_labels() {
+        let (_file, url) = temp_db_url();
+        let pool = make_write_pool(&url).await.expect("write pool");
+        run_migrations(&pool).await.expect("migrations");
+
+        lanes::seed::run_seed(&pool)
+            .await
+            .expect("run_seed on empty DB");
+
+        let (label_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM labels")
+            .fetch_one(&pool)
+            .await
+            .expect("count labels");
+        assert_eq!(
+            label_count, 8,
+            "expected exactly 8 labels for the board, got {}",
+            label_count
+        );
+    }
+
+    /// At least one card has >= 2 labels (multi-label card is required for thumbnail testing).
+    #[tokio::test]
+    async fn seed_has_multi_label_card() {
+        let (_file, url) = temp_db_url();
+        let pool = make_write_pool(&url).await.expect("write pool");
+        run_migrations(&pool).await.expect("migrations");
+
+        lanes::seed::run_seed(&pool)
+            .await
+            .expect("run_seed on empty DB");
+
+        // Count cards that have >= 2 card_labels rows
+        let (multi_label_count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM (SELECT card_id FROM card_labels GROUP BY card_id HAVING COUNT(*) >= 2)"
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("count multi-label cards");
+        assert!(
+            multi_label_count >= 1,
+            "expected >= 1 card with 2+ labels, got {}",
+            multi_label_count
+        );
+    }
+
+    /// Seed includes Alex and Jamie users (in addition to Mira) for avatar stack testing.
+    #[tokio::test]
+    async fn seed_has_three_users() {
+        let (_file, url) = temp_db_url();
+        let pool = make_write_pool(&url).await.expect("write pool");
+        run_migrations(&pool).await.expect("migrations");
+
+        lanes::seed::run_seed(&pool)
+            .await
+            .expect("run_seed on empty DB");
+
+        let (user_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+            .fetch_one(&pool)
+            .await
+            .expect("count users");
+        assert_eq!(
+            user_count, 3,
+            "expected exactly 3 seeded users (Mira, Alex, Jamie), got {}",
+            user_count
+        );
+    }
+
+    /// At least one card has cover set (design-ref c6 and c11 have covers).
+    #[tokio::test]
+    async fn seed_has_cover_cards() {
+        let (_file, url) = temp_db_url();
+        let pool = make_write_pool(&url).await.expect("write pool");
+        run_migrations(&pool).await.expect("migrations");
+
+        lanes::seed::run_seed(&pool)
+            .await
+            .expect("run_seed on empty DB");
+
+        let (cover_count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM cards WHERE cover IS NOT NULL")
+                .fetch_one(&pool)
+                .await
+                .expect("count cards with cover");
+        assert!(
+            cover_count >= 1,
+            "expected >= 1 card with a cover, got {}",
+            cover_count
+        );
+    }
 }
