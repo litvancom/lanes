@@ -8,6 +8,8 @@ pub mod icon;
 pub mod modal;
 pub mod create_board_modal;
 pub mod kanban_list;
+pub mod kanban_card;
+pub mod label_chip;
 pub mod board_header;
 pub mod sidebar;
 pub mod today_strip;

@@ -299,6 +299,147 @@ mod card_api_tests {
         assert_eq!(card.labels.len(), 2, "card should have 2 labels");
     }
 
+    // -------------------------------------------------------------------------
+    // Helper: insert a list row directly for test setup.
+    // -------------------------------------------------------------------------
+    pub async fn insert_list_direct(pool: &sqlx::SqlitePool, board_id: &str, name: &str) -> String {
+        use uuid::Uuid;
+        use fractional_index::FractionalIndex;
+        let id = Uuid::now_v7().to_string();
+        let pos = FractionalIndex::default().to_string();
+        sqlx::query!(
+            "INSERT INTO lists (id, board_id, name, position, archived) VALUES (?, ?, ?, ?, 0)",
+            id, board_id, name, pos
+        )
+        .execute(pool)
+        .await
+        .expect("insert list");
+        id
+    }
+
+    // -------------------------------------------------------------------------
+    // create_card_inner tests (Task 1, Plan 02)
+    // -------------------------------------------------------------------------
+
+    /// Empty title is rejected before any DB write.
+    #[tokio::test]
+    async fn test_create_card_empty_title_rejected() {
+        use lanes::api::card_api::create_card_inner;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+        let user_id = insert_user_direct(&write_pool, "owner_card1@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Card Test Board 1").await;
+        insert_member_direct(&write_pool, &board_id, &user_id, "owner").await;
+        let list_id = insert_list_direct(&write_pool, &board_id, "Backlog").await;
+
+        let result = create_card_inner(&write_pool, &board_id, &list_id, "   ".to_string(), "a0").await;
+        assert!(result.is_err(), "empty/whitespace title must be rejected");
+
+        // Confirm no row was inserted
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cards WHERE list_id = ?")
+            .bind(&list_id)
+            .fetch_one(&write_pool)
+            .await
+            .expect("count query");
+        assert_eq!(count, 0, "no card row should be inserted for empty title");
+    }
+
+    /// Title longer than 500 characters is rejected.
+    #[tokio::test]
+    async fn test_create_card_title_too_long_rejected() {
+        use lanes::api::card_api::create_card_inner;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+        let user_id = insert_user_direct(&write_pool, "owner_card2@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Card Test Board 2").await;
+        insert_member_direct(&write_pool, &board_id, &user_id, "owner").await;
+        let list_id = insert_list_direct(&write_pool, &board_id, "Backlog").await;
+
+        let long_title = "a".repeat(501);
+        let result = create_card_inner(&write_pool, &board_id, &list_id, long_title, "a0").await;
+        assert!(result.is_err(), "title > 500 chars must be rejected");
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cards WHERE list_id = ?")
+            .bind(&list_id)
+            .fetch_one(&write_pool)
+            .await
+            .expect("count query");
+        assert_eq!(count, 0, "no card row should be inserted for too-long title");
+    }
+
+    /// Created card has a valid fractional position string.
+    #[tokio::test]
+    async fn test_create_card_returns_valid_position() {
+        use lanes::api::card_api::{create_card_inner, next_card_position};
+        use fractional_index::FractionalIndex;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+        let user_id = insert_user_direct(&write_pool, "owner_card3@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Card Test Board 3").await;
+        insert_member_direct(&write_pool, &board_id, &user_id, "owner").await;
+        let list_id = insert_list_direct(&write_pool, &board_id, "Backlog").await;
+
+        let position = next_card_position(&write_pool, &list_id).await.expect("position");
+        let card = create_card_inner(&write_pool, &board_id, &list_id, "Test card".to_string(), &position).await.expect("create card");
+
+        // Position must parse as a valid FractionalIndex
+        let fi = FractionalIndex::from_string(&card.position);
+        assert!(fi.is_ok(), "card position '{}' must be a valid FractionalIndex", card.position);
+    }
+
+    /// Two sequential creates yield positions where the second sorts after the first.
+    #[tokio::test]
+    async fn test_create_card_appends_after_last() {
+        use lanes::api::card_api::{create_card_inner, next_card_position};
+        use fractional_index::FractionalIndex;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+        let user_id = insert_user_direct(&write_pool, "owner_card4@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Card Test Board 4").await;
+        insert_member_direct(&write_pool, &board_id, &user_id, "owner").await;
+        let list_id = insert_list_direct(&write_pool, &board_id, "Backlog").await;
+
+        let pos1 = next_card_position(&write_pool, &list_id).await.expect("pos1");
+        let card1 = create_card_inner(&write_pool, &board_id, &list_id, "First card".to_string(), &pos1).await.expect("card1");
+
+        let pos2 = next_card_position(&write_pool, &list_id).await.expect("pos2");
+        let card2 = create_card_inner(&write_pool, &board_id, &list_id, "Second card".to_string(), &pos2).await.expect("card2");
+
+        let fi1 = FractionalIndex::from_string(&card1.position).expect("fi1");
+        let fi2 = FractionalIndex::from_string(&card2.position).expect("fi2");
+        assert!(fi2 > fi1, "second card position must sort after first");
+    }
+
+    /// create_card_inner allocates card_num atomically from boards.next_card_num.
+    #[tokio::test]
+    async fn test_create_card_allocates_card_num() {
+        use lanes::api::card_api::{create_card_inner, next_card_position};
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+        let user_id = insert_user_direct(&write_pool, "owner_card5@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Card Test Board 5").await;
+        insert_member_direct(&write_pool, &board_id, &user_id, "owner").await;
+        let list_id = insert_list_direct(&write_pool, &board_id, "Backlog").await;
+
+        let pos1 = next_card_position(&write_pool, &list_id).await.expect("pos1");
+        let card1 = create_card_inner(&write_pool, &board_id, &list_id, "Card One".to_string(), &pos1).await.expect("card1");
+
+        let pos2 = next_card_position(&write_pool, &list_id).await.expect("pos2");
+        let card2 = create_card_inner(&write_pool, &board_id, &list_id, "Card Two".to_string(), &pos2).await.expect("card2");
+
+        // Each card gets a unique, sequential card_num
+        assert_ne!(card1.card_num, card2.card_num, "cards must have different card_nums");
+        assert!(card2.card_num > card1.card_num, "second card_num must be greater than first");
+
+        // Verify the counter was incremented in the DB
+        let next_num: i64 = sqlx::query_scalar("SELECT next_card_num FROM boards WHERE id = ?")
+            .bind(&board_id)
+            .fetch_one(&write_pool)
+            .await
+            .expect("next_card_num");
+        assert!(next_num > card2.card_num, "boards.next_card_num must be greater than last allocated num");
+    }
+
     /// is_done_list is populated on the list returned by get_board_inner.
     #[tokio::test]
     async fn test_get_board_inner_list_is_done_list_populated() {
