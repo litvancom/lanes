@@ -1217,7 +1217,7 @@ input, textarea {
   padding: 4px 8px 8px;
 }
 
-/* "Add a card" stub button (Phase 4 activates) */
+/* "Add a card" footer button (Phase 4 activated) */
 .lns-add-card-btn {
   display: flex;
   align-items: center;
@@ -1231,21 +1231,47 @@ input, textarea {
   padding: 4px 6px;
   border-radius: var(--radius-xs);
   text-align: left;
-  cursor: not-allowed;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.lns-add-card-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 /* ─────────────────────────────────────────────────────────
    CardStub (03-04 — title only, D-08)
    ───────────────────────────────────────────────────────── */
 
-/* White card, border, padding 8px 10px */
+/* White card, border, overflow hidden for cover band */
 .lns-card,
 .lns-card-stub {
   background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  cursor: pointer;
+  user-select: none;
+  transition: box-shadow .12s, border-color .12s, transform .04s;
+}
+/* Phase 3 stub keeps its padding; Phase 4 card uses .lns-card-body padding */
+.lns-card-stub {
   padding: 8px 10px;
+}
+.lns-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow);
+}
+/* Drag state */
+.lns-card.dragging {
+  opacity: 0.3;
+}
+/* Drag-over list highlight */
+.lns-list.drag-over {
+  background: #e3e1dc;
+  border-color: var(--accent);
+  transition: background .12s, border-color .12s;
 }
 
 .lns-card-stub-title {
@@ -2184,4 +2210,204 @@ input, textarea {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* ─────────────────────────────────────────────────────────
+   Phase 4: Card thumbnail classes (CARD-07, CARD-06, CARD-01)
+   ───────────────────────────────────────────────────────── */
+
+/* Cover band */
+.lns-card-cover {
+  height: 80px;
+  background-size: cover;
+  background-position: center;
+}
+
+/* Card body area */
+.lns-card-body {
+  padding: 8px 10px 10px;
+}
+
+/* Labels row */
+.lns-card-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+/* Card title */
+.lns-card-title {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: -0.005em;
+  color: var(--text);
+  text-wrap: pretty;
+  margin: 0 0 6px;
+}
+
+/* Done title: strikethrough + faint color */
+.lns-card-title--done {
+  text-decoration: line-through;
+  color: var(--text-faint);
+}
+
+/* Meta row */
+.lns-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Meta item (generic) */
+.lns-card-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* Due chip tones */
+.lns-card-meta-item.due-overdue {
+  color: var(--danger);
+}
+.lns-card-meta-item.due-soon {
+  color: var(--warning);
+}
+
+/* Done badge */
+.lns-card-meta-item.done {
+  background: var(--success);
+  color: white;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+/* Priority pill */
+.lns-card-prio {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.lns-card-prio.p1 {
+  background: #fde9e7;
+  color: var(--danger);
+}
+.lns-card-prio.p2 {
+  background: #fdf4e3;
+  color: #9a6b00;
+}
+
+/* Label chip — collapsed bar */
+.lns-label {
+  display: inline-flex;
+  align-items: center;
+  height: 8px;
+  min-width: 32px;
+  border-radius: 4px;
+  overflow: hidden;
+  transition: height .12s, padding .12s;
+}
+
+/* Label chip — expanded pill */
+.lns-label.expanded {
+  height: 18px;
+  padding: 0 8px;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.7);
+  white-space: nowrap;
+}
+
+/* AddCardComposer container */
+.lns-add-composer {
+  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Composer textarea */
+.lns-add-composer textarea {
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 4px 2px;
+  background: transparent;
+  color: var(--text);
+  min-height: 40px;
+  font-family: inherit;
+}
+
+/* Composer action row */
+.lns-composer-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+/* Filter search input wrapper in board header */
+.lns-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  border: 1px solid transparent;
+  min-width: 220px;
+  transition: border-color .12s, background .12s;
+}
+.lns-search:focus-within {
+  background: var(--bg-elevated);
+  border-color: var(--accent);
+}
+.lns-search input {
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  color: var(--text);
+  width: 100%;
+  font-family: inherit;
+}
+
+/* Checklist done state (all items complete) */
+.lns-card-meta-checklist--done {
+  color: var(--success);
+}
+
+/* Avatar stack within card meta */
+.lns-avatar-stack {
+  display: inline-flex;
+}
+.lns-avatar-stack > .lns-avatar {
+  border: 2px solid var(--bg-elevated);
+  margin-left: -6px;
+}
+.lns-avatar-stack > .lns-avatar:first-child {
+  margin-left: 0;
+}
+
+/* Avatar SM size for card meta */
+.lns-avatar--sm {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bg-subtle);
+  flex-shrink: 0;
 }

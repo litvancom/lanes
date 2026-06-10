@@ -63,6 +63,24 @@ pub fn Icon(
         // Two people / users
         "users" => r#"<circle cx="6" cy="5.5" r="3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M1.5 14.5c0-2.5 2-4 4.5-4s4.5 1.5 4.5 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M11 3c1.5 0 2.5 1 2.5 2.5S12.5 8 11 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M13 11c1 .5 2 1.5 2 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>"#,
 
+        // Clock — for due chip
+        "clock" => r#"<circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M8 4.5v3.75l2.5 1.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>"#,
+
+        // Chat bubble — for comment count
+        "chat" => r#"<path d="M2 3.5a1.5 1.5 0 011.5-1.5h9a1.5 1.5 0 011.5 1.5v6a1.5 1.5 0 01-1.5 1.5H9l-3 2.5V11H3.5A1.5 1.5 0 012 9.5v-6z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>"#,
+
+        // Paperclip — for attachment count
+        "paperclip" => r#"<path d="M13.5 7.5l-6.5 6.5a4 4 0 01-5.66-5.66l6.72-6.72a2.5 2.5 0 013.54 3.54L5 11.83a1 1 0 01-1.41-1.42L9 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>"#,
+
+        // Check — for done badge and checklist
+        "check" => r#"<path d="M2.5 8.5l4 4 7-7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>"#,
+
+        // Tag — for labels toggle
+        "tag" => r#"<path d="M2 2h6l6 6-6 6-6-6V2z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="6" r="1" fill="currentColor"/>"#,
+
+        // X — for composer close
+        "x" => r#"<path d="M3 3l10 10M13 3L3 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>"#,
+
         // Unknown glyph — transparent placeholder (same dimensions)
         _ => "",
     };
