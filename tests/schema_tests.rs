@@ -246,7 +246,7 @@ mod schema_tests {
     #[tokio::test]
     async fn test_shared_models_compile() {
         // Verify the shared models can be constructed (they have no cfg gates)
-        use lanes::models::{Board, Card, List};
+        use lanes::models::{Board, Card, CardLabel, List};
 
         let board = Board {
             id: "test-id".into(),
@@ -266,8 +266,17 @@ mod schema_tests {
             name: "Test List".into(),
             position: "80".into(),
             archived: false,
+            is_done_list: false,
         };
         assert_eq!(list.position, "80");
+        assert!(!list.is_done_list);
+
+        let label = CardLabel {
+            id: "label-id".into(),
+            name: "Urgent".into(),
+            color: "oklch(72% 0.10 25)".into(),
+        };
+        assert_eq!(label.name, "Urgent");
 
         let card = Card {
             id: "card-id".into(),
@@ -280,7 +289,58 @@ mod schema_tests {
             due_at: None,
             done: false,
             archived: false,
+            cover: None,
+            labels: vec![label],
+            checklist_done: 0,
+            checklist_total: 0,
+            comment_count: 0,
+            attachment_count: 0,
+            member_ids: vec![],
         };
         assert_eq!(card.card_num, 1);
+        assert_eq!(card.labels.len(), 1);
+    }
+
+    /// Assert that Migration 004 adds the five new columns:
+    /// lists.is_done_list, cards.checklist_done, cards.checklist_total,
+    /// cards.comment_count, cards.attachment_count.
+    #[tokio::test]
+    async fn test_migration_004_columns_exist() {
+        let (_file, pool) = migrated_pool().await;
+
+        // Check lists.is_done_list
+        let list_cols = sqlx::query("PRAGMA table_info(lists)")
+            .fetch_all(&pool)
+            .await
+            .expect("pragma lists");
+        let col_names: Vec<String> = list_cols.iter().map(|r| r.get::<String, _>(1)).collect();
+        assert!(
+            col_names.contains(&"is_done_list".to_string()),
+            "lists.is_done_list must exist after migration 004; found: {:?}",
+            col_names
+        );
+
+        // Check the four card count columns
+        let card_cols = sqlx::query("PRAGMA table_info(cards)")
+            .fetch_all(&pool)
+            .await
+            .expect("pragma cards");
+        let card_col_names: Vec<String> = card_cols.iter().map(|r| r.get::<String, _>(1)).collect();
+
+        for col in &["checklist_done", "checklist_total", "comment_count", "attachment_count"] {
+            assert!(
+                card_col_names.contains(&col.to_string()),
+                "cards.{} must exist after migration 004; found: {:?}",
+                col,
+                card_col_names
+            );
+        }
+
+        // Ensure cover is NOT re-added by migration 004 (it already exists in 001)
+        let cover_count = card_col_names.iter().filter(|c| c.as_str() == "cover").count();
+        assert_eq!(
+            cover_count, 1,
+            "cards.cover must exist exactly once (from 001_init.sql, not duplicated by 004)"
+        );
     }
 }

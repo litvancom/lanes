@@ -63,9 +63,11 @@ pub async fn get_board_inner(
     };
 
     // Fetch non-archived lists ordered by position ASC (BOARD-03/04/05 contract)
-    let lists: Vec<(String, String, String, String, bool)> = sqlx::query_as(
+    // is_done_list added in migration 004 (D-13).
+    let lists_raw: Vec<(String, String, String, String, bool, bool)> = sqlx::query_as(
         r#"SELECT id, board_id, name, position,
-                  CAST(archived AS BOOLEAN) as archived
+                  CAST(archived AS BOOLEAN) as archived,
+                  CAST(is_done_list AS BOOLEAN) as is_done_list
            FROM lists
            WHERE board_id = ? AND archived = 0
            ORDER BY position ASC"#
@@ -74,28 +76,73 @@ pub async fn get_board_inner(
     .fetch_all(pool)
     .await?;
 
-    let lists: Vec<List> = lists.into_iter().map(|(id, board_id, name, position, archived)| {
-        List { id, board_id, name, position, archived }
+    let lists: Vec<List> = lists_raw.into_iter().map(|(id, board_id, name, position, archived, is_done_list)| {
+        List { id, board_id, name, position, archived, is_done_list }
     }).collect();
 
-    // Fetch non-archived card stubs ordered by position ASC (D-08: title-only stubs)
-    // All Card fields selected to match the Card model exactly.
-    let cards_raw: Vec<(String, String, String, i64, String, String, Option<String>, Option<i64>, bool, bool)> =
+    // Fetch non-archived cards with all Phase-4 columns.
+    // cover was in 001; checklist_done/total/comment_count/attachment_count added in 004.
+    let cards_raw: Vec<(String, String, String, i64, String, String, Option<String>, Option<String>, Option<i64>, bool, bool, i64, i64, i64, i64)> =
         sqlx::query_as(
             r#"SELECT id, list_id, board_id, card_num, title, position,
-                      priority, due_at,
+                      cover, priority, due_at,
                       CAST(done AS BOOLEAN) as done,
-                      CAST(archived AS BOOLEAN) as archived
+                      CAST(archived AS BOOLEAN) as archived,
+                      checklist_done, checklist_total,
+                      comment_count, attachment_count
                FROM cards
                WHERE board_id = ? AND archived = 0
-               ORDER BY position ASC"#
+               ORDER BY list_id, position ASC"#
         )
         .bind(board_id)
         .fetch_all(pool)
         .await?;
 
-    let cards: Vec<Card> = cards_raw.into_iter().map(|(id, list_id, board_id, card_num, title, position, priority, due_at, done, archived)| {
-        Card { id, list_id, board_id, card_num, title, position, priority, due_at, done, archived }
+    // Fetch card labels: (card_id, label_id, label_name, label_color)
+    // Scoped to board_id via labels.board_id (T-04-01 — no cross-board label leakage).
+    let card_labels_raw: Vec<(String, String, String, String)> = sqlx::query_as(
+        r#"SELECT cl.card_id, l.id, l.name, l.color
+           FROM card_labels cl
+           JOIN labels l ON l.id = cl.label_id
+           WHERE l.board_id = ?"#
+    )
+    .bind(board_id)
+    .fetch_all(pool)
+    .await?;
+
+    // Fetch card members: (card_id, user_id)
+    // Scoped to board_id via cards join (T-04-01 — no cross-board member leakage).
+    let card_members_raw: Vec<(String, String)> = sqlx::query_as(
+        r#"SELECT cm.card_id, cm.user_id
+           FROM card_members cm
+           JOIN cards c ON c.id = cm.card_id
+           WHERE c.board_id = ?"#
+    )
+    .bind(board_id)
+    .fetch_all(pool)
+    .await?;
+
+    // Group labels by card_id
+    use std::collections::HashMap;
+    use crate::models::CardLabel;
+    let mut labels_by_card: HashMap<String, Vec<CardLabel>> = HashMap::new();
+    for (card_id, label_id, label_name, label_color) in card_labels_raw {
+        labels_by_card
+            .entry(card_id)
+            .or_default()
+            .push(CardLabel { id: label_id, name: label_name, color: label_color });
+    }
+
+    // Group member_ids by card_id
+    let mut members_by_card: HashMap<String, Vec<String>> = HashMap::new();
+    for (card_id, user_id) in card_members_raw {
+        members_by_card.entry(card_id).or_default().push(user_id);
+    }
+
+    let cards: Vec<Card> = cards_raw.into_iter().map(|(id, list_id, board_id, card_num, title, position, cover, priority, due_at, done, archived, checklist_done, checklist_total, comment_count, attachment_count)| {
+        let labels = labels_by_card.remove(&id).unwrap_or_default();
+        let member_ids = members_by_card.remove(&id).unwrap_or_default();
+        Card { id, list_id, board_id, card_num, title, position, cover, priority, due_at, done, archived, labels, checklist_done, checklist_total, comment_count, attachment_count, member_ids }
     }).collect();
 
     Ok(BoardData { board, lists, cards })

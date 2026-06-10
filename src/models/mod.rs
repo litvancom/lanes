@@ -54,6 +54,17 @@ pub struct List {
     pub name: String,
     pub position: String,
     pub archived: bool,
+    /// Phase 4 — D-13: cards moved into this list have done=1 set automatically.
+    /// NOT derived from the list name.
+    pub is_done_list: bool,
+}
+
+/// A label attached to a card (display only in Phase 4; editing UI is Phase 5).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct CardLabel {
+    pub id: String,
+    pub name: String,
+    pub color: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -68,4 +79,19 @@ pub struct Card {
     pub due_at: Option<i64>,
     pub done: bool,
     pub archived: bool,
+    // Phase 4 additions
+    /// CSS color/gradient string for the cover band, or None (D-12).
+    pub cover: Option<String>,
+    /// Labels attached to this card (populated from card_labels JOIN labels).
+    pub labels: Vec<CardLabel>,
+    /// Denormalized checklist progress — done items (D-11).
+    pub checklist_done: i64,
+    /// Denormalized checklist progress — total items (D-11).
+    pub checklist_total: i64,
+    /// Denormalized comment count (D-11).
+    pub comment_count: i64,
+    /// Denormalized attachment count (D-11).
+    pub attachment_count: i64,
+    /// IDs of users assigned to this card (from card_members).
+    pub member_ids: Vec<String>,
 }

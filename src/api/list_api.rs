@@ -85,6 +85,7 @@ pub async fn create_list_inner(
         name,
         position: position.to_string(),
         archived: false,
+        is_done_list: false,
     })
 }
 
