@@ -1,8 +1,8 @@
 use leptos::prelude::*;
 use crate::models::List;
 use crate::api::list_api::{CreateList, RenameList, ReorderList};
-use crate::api::card_api::CreateCard;
-use crate::routes::board::BoardSignals;
+use crate::api::card_api::{CreateCard, MoveCard};
+use crate::routes::board::{BoardSignals, DragInfo};
 use crate::components::kanban_card::KanbanCard;
 
 // ---------------------------------------------------------------------------
@@ -37,6 +37,73 @@ pub fn KanbanList(
     let labels_expanded = board_signals.labels_expanded;
     let search = board_signals.search;
     let drag_info = board_signals.drag_info;
+    let hover_list_id = board_signals.hover_list_id;
+    let before_card_id = board_signals.before_card_id;
+    let done_list_ids = board_signals.done_list_ids;
+    let move_card_action = board_signals.move_card_action;
+    let board_id_sig = board_signals.board_id;
+
+    // --- Drag error banner (non-blocking rollback message) ---
+    let drag_error: RwSignal<Option<String>> = RwSignal::new(None);
+
+    // --- Drag list ID (captured for drag-over class reactive check) ---
+    let list_id_for_drag_class = list.id.clone();
+
+    // --- Document-level pointermove: update position, threshold check, hit-test ---
+    use leptos_use::use_event_listener;
+    use leptos_use::use_document;
+
+    use_event_listener(use_document(), leptos::ev::pointermove, move |ev: leptos::ev::PointerEvent| {
+        let has_drag = drag_info.with(|d| d.is_some());
+        if !has_drag { return; }
+
+        let x = ev.client_x() as f64;
+        let y = ev.client_y() as f64;
+
+        drag_info.update(|d| {
+            if let Some(info) = d.as_mut() {
+                // Enter drag state once threshold exceeded (5px per UI-SPEC)
+                if !info.is_dragging {
+                    let dx = x - info.start_x;
+                    let dy = y - info.start_y;
+                    if (dx * dx + dy * dy).sqrt() > 5.0 {
+                        info.is_dragging = true;
+                    }
+                }
+                info.current_x = x;
+                info.current_y = y;
+            }
+        });
+
+        // Hit-test: find which list (and before-card) is under the pointer (client-only)
+        #[cfg(target_arch = "wasm32")]
+        {
+            update_hover_target(x, y, hover_list_id, before_card_id);
+        }
+    });
+
+    // --- Document-level pointerup: commit drop if dragging ---
+    use_event_listener(use_document(), leptos::ev::pointerup, move |_ev: leptos::ev::PointerEvent| {
+        let current = drag_info.get_untracked();
+        if let Some(info) = current {
+            if info.is_dragging {
+                commit_drop(info, board_signals, drag_error);
+            }
+        }
+        drag_info.set(None);
+        hover_list_id.set(None);
+        before_card_id.set(None);
+    });
+
+    // --- Document-level pointercancel: snap back (UI-SPEC line 387) ---
+    use_event_listener(use_document(), leptos::ev::pointercancel, move |_ev: leptos::ev::PointerEvent| {
+        drag_info.set(None);
+        hover_list_id.set(None);
+        before_card_id.set(None);
+    });
+
+    // Watch move_card_action for errors → rollback already done in commit_drop via Effect
+    // The rollback Effect is per-drop (created inside commit_drop). Nothing needed here.
 
     // --- Inline rename state ---
     let editing = RwSignal::new(false);
@@ -154,7 +221,21 @@ pub fn KanbanList(
     };
 
     view! {
-        <div class="lns-list">
+        <div
+            class="lns-list"
+            class:drag-over={
+                let lid = list_id_for_drag_class.clone();
+                move || hover_list_id.get().map_or(false, |id| id == lid)
+            }
+            attr:data-list-id=list_id_for_drag_class.clone()
+        >
+            // ── Drag rollback error banner (non-blocking) ────────────────
+            <Show when=move || drag_error.get().is_some()>
+                <div class="lns-error-inline">
+                    {move || drag_error.get().unwrap_or_default()}
+                </div>
+            </Show>
+
             // ── List Header ──────────────────────────────────────────────
             <div class="lns-list-header">
                 <Show
@@ -282,6 +363,268 @@ pub fn KanbanList(
                 </div>
             </Show>
         </div>
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Drag helper: Update hover_list_id based on pointer position (client-only)
+// ---------------------------------------------------------------------------
+
+/// Walk document.elementsFromPoint to find which list and before-card the pointer is over.
+/// Sets hover_list_id and before_card_id based on what's under the pointer.
+/// WASM-only — no-op on server.
+#[cfg(target_arch = "wasm32")]
+fn update_hover_target(
+    x: f64,
+    y: f64,
+    hover_list_id: leptos::prelude::RwSignal<Option<String>>,
+    before_card_id: leptos::prelude::RwSignal<Option<String>>,
+) {
+    use wasm_bindgen::JsCast;
+    let Some(window) = leptos::web_sys::window() else { return; };
+    let Some(doc) = window.document() else { return; };
+    let elements = doc.elements_from_point(x as f32, y as f32);
+    let mut found_list: Option<String> = None;
+    let mut found_card: Option<String> = None;
+    let len = elements.length();
+    for i in 0..len {
+        let js_val = elements.get(i);
+        let Some(el) = js_val.dyn_into::<leptos::web_sys::Element>().ok()
+        else { continue; };
+
+        if found_card.is_none() {
+            if let Some(card_id) = el.get_attribute("data-card-id") {
+                // We're over a card; the dragged card will be inserted before this card
+                found_card = Some(card_id);
+                // Its data-list-id is the target list
+                if let Some(lid) = el.get_attribute("data-list-id") {
+                    if found_list.is_none() {
+                        found_list = Some(lid);
+                    }
+                }
+            }
+        }
+
+        if found_list.is_none() {
+            if let Some(lid) = el.get_attribute("data-list-id") {
+                found_list = Some(lid);
+            }
+        }
+
+        // Stop once we have both pieces of info
+        if found_list.is_some() && found_card.is_some() {
+            break;
+        }
+        // If we have a list but no card, we've found the list backdrop
+        if found_list.is_some() && found_card.is_none() {
+            // No card above list element in the stack — append to list
+            break;
+        }
+    }
+    hover_list_id.set(found_list);
+    before_card_id.set(found_card);
+}
+
+// ---------------------------------------------------------------------------
+// Drag helper: Compute card drop position using fractional indexing (CARD-04)
+// ---------------------------------------------------------------------------
+
+/// Compute a new fractional position for dropping a card.
+///
+/// `cards_in_list`: ordered card IDs in the target list (EXCLUDING the dragged card — Pitfall 3).
+/// `before_card_id`: the card the dragged card will be inserted before (None = append to list).
+///
+/// Returns `None` only if the fractional index key space is exhausted between two adjacent keys
+/// (extremely rare in practice).
+fn compute_card_drop_position(
+    cards_in_list: &[String],
+    card_signals: &std::collections::HashMap<String, leptos::prelude::RwSignal<crate::models::Card>>,
+    before_card_id: Option<&str>,
+) -> Option<String> {
+    use fractional_index::FractionalIndex;
+
+    if before_card_id.is_none() {
+        // Append to list
+        if let Some(last_id) = cards_in_list.last() {
+            let last_pos = card_signals.get(last_id)?.get_untracked().position;
+            FractionalIndex::from_string(&last_pos).ok()
+                .map(|fi| FractionalIndex::new_after(&fi).to_string())
+        } else {
+            // Empty list
+            Some(FractionalIndex::default().to_string())
+        }
+    } else {
+        let before_id = before_card_id.unwrap();
+        let before_idx = cards_in_list.iter().position(|id| id == before_id)?;
+        let before_pos = card_signals.get(before_id)?.get_untracked().position;
+        let before_fi = FractionalIndex::from_string(&before_pos).ok()?;
+
+        if before_idx == 0 {
+            // Prepend — new_before
+            Some(FractionalIndex::new_before(&before_fi).to_string())
+        } else {
+            // Insert between prev and before
+            let prev_id = &cards_in_list[before_idx - 1];
+            let prev_pos = card_signals.get(prev_id)?.get_untracked().position;
+            let prev_fi = FractionalIndex::from_string(&prev_pos).ok()?;
+            FractionalIndex::new_between(&prev_fi, &before_fi)
+                .map(|fi| fi.to_string())
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Drag helper: Commit drop — optimistic update + server fn dispatch + rollback
+// ---------------------------------------------------------------------------
+
+/// Snapshot of a card's state before an optimistic move (for rollback).
+#[derive(Clone)]
+struct PreMoveSnapshot {
+    from_list_id: String,
+    original_position: String,
+    original_done: bool,
+    original_index: usize,
+}
+
+/// Execute the full drop: snapshot → optimistic update → server dispatch → rollback on error.
+///
+/// D-06 requirement: sets `done` optimistically based on `done_list_ids`.
+fn commit_drop(
+    info: DragInfo,
+    board_signals: BoardSignals,
+    drag_error: leptos::prelude::RwSignal<Option<String>>,
+) {
+    let card_id = info.card_id.clone();
+    let from_list_id = info.from_list_id.clone();
+
+    // --- Resolve the target list and before-card from hover state ---
+    // hover_list_id was set by update_hover_target during pointermove.
+    // If no hover, abort (pointer released outside a list area).
+    let to_list_id = match board_signals.hover_list_id.get_untracked() {
+        Some(id) => id,
+        None => return,
+    };
+
+    // Resolve before-card from hover target (currently: append to hovered list).
+    // Full hit-testing for before-card is implemented in update_hover_target_with_card below.
+    // For now we use None (append) — the WASM path refines this via before_card_id signal.
+    let before_card_id = board_signals.before_card_id.get_untracked();
+
+    // --- (a) Capture pre-move snapshot ---
+    let card_sig = match board_signals.card_signals.with(|cs| cs.get(&card_id).copied()) {
+        Some(sig) => sig,
+        None => return,
+    };
+    let pre_card = card_sig.get_untracked();
+    let original_index = board_signals.list_cards.with(|m| {
+        m.get(&from_list_id)
+            .and_then(|ids| ids.iter().position(|id| id == &card_id))
+            .unwrap_or(0)
+    });
+    let snapshot = PreMoveSnapshot {
+        from_list_id: from_list_id.clone(),
+        original_position: pre_card.position.clone(),
+        original_done: pre_card.done,
+        original_index,
+    };
+
+    // --- (b) Compute drop position (EXCLUDING dragged card from neighbor list) ---
+    // Get the target list cards, excluding the dragged card
+    let target_cards_raw = board_signals.list_cards.with(|m| {
+        m.get(&to_list_id).cloned().unwrap_or_default()
+    });
+    let target_cards_excl: Vec<String> = target_cards_raw.iter()
+        .filter(|id| *id != &card_id)
+        .cloned()
+        .collect();
+
+    let new_position = board_signals.card_signals.with(|cs| {
+        compute_card_drop_position(&target_cards_excl, cs, before_card_id.as_deref())
+    });
+
+    let new_position = match new_position {
+        Some(p) => p,
+        None => {
+            // Key space exhausted — fallback to append after all
+            board_signals.card_signals.with(|cs| {
+                compute_card_drop_position(&target_cards_excl, cs, None)
+            }).unwrap_or_else(|| fractional_index::FractionalIndex::default().to_string())
+        }
+    };
+
+    // --- (c) Optimistic update ---
+    let is_done_optimistic = board_signals.done_list_ids.get_untracked().contains(&to_list_id);
+    card_sig.update(|c| {
+        c.list_id = to_list_id.clone();
+        c.position = new_position.clone();
+        c.done = is_done_optimistic;
+    });
+
+    // Move card id between list_cards[from] → list_cards[to]
+    board_signals.list_cards.update(|m| {
+        // Remove from source list
+        if let Some(ids) = m.get_mut(&from_list_id) {
+            ids.retain(|id| id != &card_id);
+        }
+        // Insert into target list at the correct index
+        let insert_idx = compute_insert_index(&target_cards_excl, before_card_id.as_deref());
+        let target_ids = m.entry(to_list_id.clone()).or_default();
+        if insert_idx <= target_ids.len() {
+            target_ids.insert(insert_idx, card_id.clone());
+        } else {
+            target_ids.push(card_id.clone());
+        }
+    });
+
+    // --- (d) Dispatch server fn ---
+    let board_id = board_signals.board_id.get_untracked();
+    board_signals.move_card_action.dispatch(MoveCard {
+        board_id,
+        card_id: card_id.clone(),
+        to_list_id: to_list_id.clone(),
+        new_position: new_position.clone(),
+    });
+
+    // --- (e) Watch for error → rollback ---
+    let card_id_for_rollback = card_id.clone();
+    let to_list_id_for_rollback = to_list_id.clone();
+    let snapshot_for_rollback = snapshot.clone();
+    Effect::new(move |_| {
+        if let Some(Err(_)) = board_signals.move_card_action.value().get() {
+            // Rollback: restore card signal to pre-move state
+            if let Some(sig) = board_signals.card_signals.with(|cs| cs.get(&card_id_for_rollback).copied()) {
+                sig.update(|c| {
+                    c.list_id = snapshot_for_rollback.from_list_id.clone();
+                    c.position = snapshot_for_rollback.original_position.clone();
+                    c.done = snapshot_for_rollback.original_done;
+                });
+            }
+            // Rollback list_cards: remove from to_list, re-insert into from_list at original_index
+            board_signals.list_cards.update(|m| {
+                if let Some(ids) = m.get_mut(&to_list_id_for_rollback) {
+                    ids.retain(|id| id != &card_id_for_rollback);
+                }
+                let from_ids = m.entry(snapshot_for_rollback.from_list_id.clone()).or_default();
+                let idx = snapshot_for_rollback.original_index.min(from_ids.len());
+                from_ids.insert(idx, card_id_for_rollback.clone());
+            });
+            drag_error.set(Some("Couldn't move card — changes reverted".to_string()));
+        }
+    });
+}
+
+/// Compute the index to insert the card into the target list's id vec.
+fn compute_insert_index(
+    target_cards_excl: &[String],
+    before_card_id: Option<&str>,
+) -> usize {
+    match before_card_id {
+        None => target_cards_excl.len(), // append
+        Some(before_id) => {
+            target_cards_excl.iter()
+                .position(|id| id == before_id)
+                .unwrap_or(target_cards_excl.len())
+        }
     }
 }
 

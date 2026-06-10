@@ -20,6 +20,7 @@ use std::collections::{HashMap, HashSet};
 use crate::models::Card;
 use crate::api::board_api::{get_board, TouchLastViewed};
 use crate::api::list_api::{CreateList, RenameList, ReorderList};
+use crate::api::card_api::MoveCard;
 use crate::components::board_header::BoardHeader;
 use crate::components::kanban_list::{KanbanList, AddListComposer, EmptyBoardCard};
 use crate::components::create_board_modal::CreateBoardModal;
@@ -61,12 +62,18 @@ pub struct BoardSignals {
     pub done_list_ids: RwSignal<HashSet<String>>,
     /// Current drag state (None = no drag in progress)
     pub drag_info: RwSignal<Option<DragInfo>>,
-    /// List being hovered during a drag
+    /// List being hovered during a drag (for .drag-over highlight)
     pub hover_list_id: RwSignal<Option<String>>,
+    /// Card being hovered over (the dragged card will be inserted before this card; None = append)
+    pub before_card_id: RwSignal<Option<String>>,
     /// Filter search text (CARD-05)
     pub search: RwSignal<String>,
     /// Label expand/collapse toggle (CARD-06)
     pub labels_expanded: RwSignal<bool>,
+    /// Server action for moving cards (owned here; KanbanList dispatches via BoardSignals)
+    pub move_card_action: ServerAction<MoveCard>,
+    /// Board ID (needed by KanbanList commit_drop to dispatch MoveCard)
+    pub board_id: RwSignal<String>,
 }
 
 /// Board view page component (`/board/:id`).
@@ -188,6 +195,8 @@ pub fn BoardPage() -> impl IntoView {
                                     .map(|l| l.id.clone())
                                     .collect();
 
+                                let move_card_action = ServerAction::<MoveCard>::new();
+
                                 let board_signals = BoardSignals {
                                     list_order: RwSignal::new(list_order),
                                     list_cards: RwSignal::new(list_cards_map),
@@ -195,8 +204,11 @@ pub fn BoardPage() -> impl IntoView {
                                     done_list_ids: RwSignal::new(done_list_ids_set),
                                     drag_info: RwSignal::new(None),
                                     hover_list_id: RwSignal::new(None),
+                                    before_card_id: RwSignal::new(None),
                                     search: RwSignal::new(String::new()),
                                     labels_expanded: RwSignal::new(false),
+                                    move_card_action,
+                                    board_id: RwSignal::new(data.board.id.clone()),
                                 };
 
                                 // Provide context for all child components

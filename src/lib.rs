@@ -1,3 +1,6 @@
+// Increase recursion limit for complex type inference in WASM closures (Leptos drag-drop)
+#![recursion_limit = "256"]
+
 pub mod app;
 pub mod models;
 pub mod routes;
