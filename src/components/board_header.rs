@@ -26,7 +26,13 @@ fn safe_hex(c: &str) -> &str {
 /// - T-03-20: `toggle_star_board` server fn enforces board membership before the UPDATE
 /// - T-03-28: archive_board server fn enforces owner-only check regardless of UI render
 #[component]
-pub fn BoardHeader(board: BoardWithMeta) -> impl IntoView {
+pub fn BoardHeader(
+    board: BoardWithMeta,
+    /// Search/filter signal from BoardSignals (CARD-05)
+    search: RwSignal<String>,
+    /// Label expand/collapse signal from BoardSignals (CARD-06)
+    labels_expanded: RwSignal<bool>,
+) -> impl IntoView {
     // Validate the board color defensively (T-03-17)
     let validated_color = safe_hex(&board.color).to_string();
 
@@ -121,14 +127,41 @@ pub fn BoardHeader(board: BoardWithMeta) -> impl IntoView {
                     "Share"
                 </button>
 
-                // Filter (inert Phase 3)
-                <button type="button" class="lns-btn lns-btn--ghost" disabled=true>
-                    <crate::components::icon::Icon name="filter"/>
-                    "Filter"
-                </button>
+                // Filter search input (Phase 4 activated — CARD-05)
+                <div class="lns-search">
+                    <crate::components::icon::Icon name="search"/>
+                    <input
+                        type="text"
+                        placeholder="Filter cards…"
+                        prop:value=move || search.get()
+                        on:input=move |ev| search.set(event_target_value(&ev))
+                        aria-label="Filter cards"
+                    />
+                    <Show when=move || !search.get().is_empty()>
+                        <button
+                            type="button"
+                            class="lns-icon-btn"
+                            aria-label="Clear filter"
+                            on:click=move |_| search.set(String::new())
+                        >
+                            <crate::components::icon::Icon name="x"/>
+                        </button>
+                    </Show>
+                </div>
 
-                // Labels toggle (inert Phase 3)
-                <button type="button" class="lns-btn lns-btn--ghost" disabled=true>
+                // Labels toggle (Phase 4 activated — CARD-06)
+                <button
+                    type="button"
+                    class=move || {
+                        if labels_expanded.get() {
+                            "lns-btn lns-btn--sm lns-btn--primary"
+                        } else {
+                            "lns-btn lns-btn--sm"
+                        }
+                    }
+                    on:click=move |_| labels_expanded.update(|v| *v = !*v)
+                >
+                    <crate::components::icon::Icon name="tag"/>
                     "Labels"
                 </button>
 

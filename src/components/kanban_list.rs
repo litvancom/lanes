@@ -1,35 +1,22 @@
 use leptos::prelude::*;
-use crate::models::{List, Card};
+use crate::models::List;
 use crate::api::list_api::{CreateList, RenameList, ReorderList};
+use crate::api::card_api::CreateCard;
+use crate::routes::board::BoardSignals;
+use crate::components::kanban_card::KanbanCard;
 
 // ---------------------------------------------------------------------------
-// CardStub — title-only card render (D-08, Phase 3 minimal stub)
+// KanbanList — full list component with rename, signal-based cards, AddCardComposer
 // ---------------------------------------------------------------------------
 
-/// A minimal card stub rendering the card title only (D-08).
-/// Phase 4 will enrich this with cover images, labels, due dates, and meta.
-/// No priority/due_at/label markup intentionally — this is a Phase 3 stub.
-#[component]
-pub fn CardStub(card: Card) -> impl IntoView {
-    view! {
-        <div class="lns-card lns-card-stub">
-            <span class="lns-card-stub-title">{card.title}</span>
-        </div>
-    }
-}
-
-// ---------------------------------------------------------------------------
-// KanbanList — full list component with rename, card stubs, overflow menu
-// ---------------------------------------------------------------------------
-
-/// A kanban list with inline rename, card stubs, and Move left/right reorder.
+/// A kanban list with inline rename, signal-based card rendering, and AddCardComposer.
 ///
-/// The caller passes fractional neighbor positions for reorder computation (Pattern 4).
-/// Client-side computation of midpoints using fractional_index::FractionalIndex (D-15).
+/// Reads `BoardSignals` from context to get card signals and filter state.
+/// List mutations (rename/reorder) still dispatch server actions and trigger refetch.
+/// Card creation is optimistic — no refetch.
 #[component]
 pub fn KanbanList(
     list: List,
-    cards: Vec<Card>,
     can_move_left: bool,
     can_move_right: bool,
     /// Position of the list immediately to the left (for Move left computation)
@@ -43,6 +30,13 @@ pub fn KanbanList(
     rename_action: ServerAction<RenameList>,
     reorder_action: ServerAction<ReorderList>,
 ) -> impl IntoView {
+    // Read BoardSignals from context (provided by board.rs)
+    let board_signals = use_context::<BoardSignals>().expect("BoardSignals context missing");
+    let list_cards = board_signals.list_cards;
+    let card_signals = board_signals.card_signals;
+    let labels_expanded = board_signals.labels_expanded;
+    let search = board_signals.search;
+
     // --- Inline rename state ---
     let editing = RwSignal::new(false);
     let title_input_ref = NodeRef::<leptos::html::Input>::new();
@@ -147,9 +141,16 @@ pub fn KanbanList(
         }
     };
 
-    let card_count = cards.len();
+    // Capture list_id as a plain string for <For> closure
+    let list_id_for_render = list.id.clone();
     let list_name_display = list.name.clone();
     let list_name_input_default = list.name.clone();
+
+    // Reactive card count for the header pill (reads from list_cards signal)
+    let list_id_for_count = list.id.clone();
+    let card_count = move || {
+        list_cards.with(|m| m.get(&list_id_for_count).map(|v| v.len()).unwrap_or(0))
+    };
 
     view! {
         <div class="lns-list">
@@ -188,7 +189,7 @@ pub fn KanbanList(
                     />
                 </Show>
 
-                // Count pill
+                // Count pill (reactive from BoardSignals)
                 <span class="lns-list-count">{card_count}</span>
 
                 // Overflow dots button
@@ -228,21 +229,311 @@ pub fn KanbanList(
 
             // ── Cards area ───────────────────────────────────────────────
             <div class="lns-list-cards">
+                // Signal-based <For> with reactive filter (Pitfall 2 + Pitfall 4 + Pitfall 6)
                 <For
-                    each=move || cards.clone()
-                    key=|c| c.id.clone()
-                    children=|card| view! { <CardStub card=card/> }
-                />
+                    each={
+                        let list_id_c = list_id_for_render.clone();
+                        move || {
+                            // Pitfall 6: filter must be inside reactive closure reading search.get()
+                            let q = search.get().to_lowercase();
+                            // Pitfall 4: use .with() to avoid cloning the entire HashMap
+                            let ids = list_cards.with(|m| {
+                                m.get(&list_id_c).cloned().unwrap_or_default()
+                            });
+                            ids.into_iter()
+                                .filter(|id| {
+                                    if q.is_empty() { return true; }
+                                    card_signals.with(|cs| {
+                                        cs.get(id).map_or(false, |sig| {
+                                            let c = sig.get();
+                                            c.title.to_lowercase().contains(&q)
+                                                || c.labels.iter().any(|l| l.name.to_lowercase().contains(&q))
+                                        })
+                                    })
+                                })
+                                // Pitfall 4: use .with() to get the signal without cloning the map
+                                .filter_map(|id| card_signals.with(|cs| cs.get(&id).copied()))
+                                .collect::<Vec<_>>()
+                        }
+                    }
+                    // Pitfall 2: key by untracked ID to avoid creating reactive subscriptions in key fn
+                    key=|sig| sig.get_untracked().id.clone()
+                    let(card_sig)
+                >
+                    <KanbanCard
+                        card=card_sig
+                        labels_expanded=labels_expanded
+                        list_id=list_id_for_render.clone()
+                    />
+                </For>
             </div>
 
-            // ── Footer: "Add a card" stub (Phase 4 activates) ────────────
-            <div class="lns-list-footer">
-                <button type="button" class="lns-add-card-btn" disabled=true>
+            // ── Footer: "Add a card" / AddCardComposer ────────────────────
+            // Hidden entirely when filter is active (UI-SPEC line 308, CARD-05 cross-cut)
+            <Show when=move || search.get().trim().is_empty()>
+                <div class="lns-list-footer">
+                    <AddCardComposer
+                        list_id=list.id.clone()
+                        board_id=list.board_id.clone()
+                        board_signals=board_signals
+                    />
+                </div>
+            </Show>
+        </div>
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AddCardComposer — inline rapid-entry card composer (CARD-01)
+// ---------------------------------------------------------------------------
+
+/// Inline composer for creating a new card at the end of a list.
+///
+/// Collapsed: a text button "Add a card".
+/// Expanded: textarea + "Add card" button + close button.
+///
+/// Keyboard behavior (UI-SPEC §AddCardComposer):
+/// - Enter (no Shift): prevent default → submit → clear → re-focus (composer stays open)
+/// - Shift+Enter: newline (default behavior)
+/// - Escape: close composer → revert to "Add a card" button
+///
+/// On submit: dispatches CreateCard server fn AND optimistically inserts into BoardSignals.
+/// On server error: rolls back the optimistic card and surfaces a non-blocking error.
+#[component]
+pub fn AddCardComposer(
+    list_id: String,
+    board_id: String,
+    board_signals: BoardSignals,
+) -> impl IntoView {
+    let composing = RwSignal::new(false);
+    let error_msg = RwSignal::new(Option::<String>::None);
+    let textarea_ref = NodeRef::<leptos::html::Textarea>::new();
+
+    // Auto-focus textarea when composer opens (same pattern as AddListComposer)
+    Effect::new(move |_| {
+        if composing.get() {
+            if let Some(ta) = textarea_ref.get() {
+                let _ = ta.focus();
+            }
+        }
+    });
+
+    let list_id_sv = StoredValue::new(list_id.clone());
+    let board_id_sv = StoredValue::new(board_id.clone());
+
+    // ServerAction for CreateCard
+    let create_action = ServerAction::<CreateCard>::new();
+
+    // Watch for server errors to roll back optimistic card
+    // We store the optimistic card ID so we can remove it on failure
+    let optimistic_id: RwSignal<Option<String>> = RwSignal::new(None);
+
+    Effect::new(move |_| {
+        match create_action.value().get() {
+            Some(Ok(card)) => {
+                // Server confirmed: update the optimistic card signal with real data
+                let real_id = card.id.clone();
+                board_signals.card_signals.update(|cs| {
+                    // Replace optimistic entry if it exists, or update with real card
+                    if let Some(opt_id) = optimistic_id.get_untracked() {
+                        if opt_id != real_id {
+                            // Remove old optimistic entry, add real one
+                            cs.remove(&opt_id);
+                        }
+                        // Update with confirmed server data
+                        if let Some(sig) = cs.get(&real_id) {
+                            sig.set(card.clone());
+                        } else {
+                            cs.insert(real_id.clone(), RwSignal::new(card.clone()));
+                        }
+                        // Fix list_cards too if id changed
+                        if opt_id != real_id {
+                            let lid = list_id_sv.get_value();
+                            board_signals.list_cards.update(|m| {
+                                if let Some(ids) = m.get_mut(&lid) {
+                                    ids.retain(|id| id != &opt_id);
+                                    if !ids.contains(&real_id) {
+                                        ids.push(real_id.clone());
+                                    }
+                                }
+                            });
+                        }
+                    }
+                    optimistic_id.set(None);
+                });
+                error_msg.set(None);
+            }
+            Some(Err(_)) => {
+                // Rollback: remove optimistic card
+                if let Some(opt_id) = optimistic_id.get_untracked() {
+                    let lid = list_id_sv.get_value();
+                    board_signals.card_signals.update(|cs| { cs.remove(&opt_id); });
+                    board_signals.list_cards.update(|m| {
+                        if let Some(ids) = m.get_mut(&lid) {
+                            ids.retain(|id| id != &opt_id);
+                        }
+                    });
+                    optimistic_id.set(None);
+                }
+                error_msg.set(Some("Failed to add card — try again".to_string()));
+            }
+            None => {}
+        }
+    });
+
+    // Submit: optimistic insert + dispatch server fn
+    let submit = move |title: String| {
+        let trimmed = title.trim().to_string();
+        if trimmed.is_empty() { return; }
+
+        let list_id_val = list_id_sv.get_value();
+        let board_id_val = board_id_sv.get_value();
+
+        // Optimistic insert: create a temporary Card with a client-side placeholder id.
+        // Simple monotonic counter-based temp id — replaced by the real server id
+        // when the server fn responds. Only needs to be unique within this session.
+        let temp_id = {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static COUNTER: AtomicU64 = AtomicU64::new(1);
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            format!("opt-{}", n)
+        };
+
+        // Compute an optimistic position (append after last)
+        let optimistic_pos = {
+            use fractional_index::FractionalIndex;
+            board_signals.list_cards.with(|m| {
+                let ids = m.get(&list_id_val).cloned().unwrap_or_default();
+                let last_pos = ids.last()
+                    .and_then(|id| board_signals.card_signals.with(|cs| {
+                        cs.get(id).map(|sig| sig.get_untracked().position.clone())
+                    }));
+                match last_pos {
+                    None => FractionalIndex::default().to_string(),
+                    Some(p) => FractionalIndex::from_string(&p)
+                        .map(|fi| FractionalIndex::new_after(&fi).to_string())
+                        .unwrap_or_else(|_| FractionalIndex::default().to_string()),
+                }
+            })
+        };
+
+        let optimistic_card = crate::models::Card {
+            id: temp_id.clone(),
+            list_id: list_id_val.clone(),
+            board_id: board_id_val.clone(),
+            card_num: 0, // will be replaced by server response
+            title: trimmed.clone(),
+            position: optimistic_pos,
+            priority: None,
+            due_at: None,
+            done: false,
+            archived: false,
+            cover: None,
+            labels: Vec::new(),
+            checklist_done: 0,
+            checklist_total: 0,
+            comment_count: 0,
+            attachment_count: 0,
+            member_ids: Vec::new(),
+        };
+
+        // Insert optimistic card into signals
+        board_signals.card_signals.update(|cs| {
+            cs.insert(temp_id.clone(), RwSignal::new(optimistic_card));
+        });
+        board_signals.list_cards.update(|m| {
+            m.entry(list_id_val.clone()).or_default().push(temp_id.clone());
+        });
+        optimistic_id.set(Some(temp_id));
+
+        // Dispatch server fn
+        create_action.dispatch(CreateCard {
+            board_id: board_id_val,
+            list_id: list_id_val,
+            title: trimmed,
+        });
+
+        error_msg.set(None);
+    };
+
+    view! {
+        <Show
+            when=move || composing.get()
+            fallback=move || view! {
+                <button
+                    type="button"
+                    class="lns-add-card-btn"
+                    on:click=move |_| composing.set(true)
+                >
                     <crate::components::icon::Icon name="plus"/>
                     "Add a card"
                 </button>
+            }
+        >
+            <div class="lns-add-composer">
+                // Error banner (non-blocking, dismisses on next submit attempt)
+                <Show when=move || error_msg.get().is_some()>
+                    <div class="lns-error-inline">
+                        {move || error_msg.get().unwrap_or_default()}
+                    </div>
+                </Show>
+
+                // Textarea
+                <textarea
+                    node_ref=textarea_ref
+                    class="lns-add-composer-textarea"
+                    placeholder="Enter a title for this card…"
+                    rows="3"
+                    on:keydown={
+                        let s = submit.clone();
+                        move |e: leptos::ev::KeyboardEvent| {
+                            if e.key() == "Enter" && !e.shift_key() {
+                                e.prevent_default();
+                                if let Some(ta) = textarea_ref.get() {
+                                    let val = ta.value();
+                                    s(val);
+                                    ta.set_value("");
+                                    // Re-focus so composer stays open for rapid entry (CARD-01)
+                                    let _ = ta.focus();
+                                }
+                            } else if e.key() == "Escape" {
+                                composing.set(false);
+                            }
+                            // Shift+Enter: default newline behavior (no preventDefault)
+                        }
+                    }
+                />
+
+                // Action row
+                <div class="lns-composer-row">
+                    <button
+                        type="button"
+                        class="lns-btn lns-btn--primary lns-btn--sm"
+                        on:click={
+                            let s = submit.clone();
+                            move |_| {
+                                if let Some(ta) = textarea_ref.get() {
+                                    let val = ta.value();
+                                    s(val);
+                                    ta.set_value("");
+                                    let _ = ta.focus();
+                                }
+                            }
+                        }
+                    >
+                        "Add card"
+                    </button>
+                    <button
+                        type="button"
+                        class="lns-btn lns-btn--ghost lns-btn--sm"
+                        aria-label="Close composer"
+                        on:click=move |_| composing.set(false)
+                    >
+                        <crate::components::icon::Icon name="x"/>
+                    </button>
+                </div>
             </div>
-        </div>
+        </Show>
     }
 }
 
