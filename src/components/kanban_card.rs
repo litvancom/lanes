@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use crate::models::Card;
 use crate::components::label_chip::LabelChip;
+use crate::routes::board::DragInfo;
 
 /// Validate a CSS color string for safe interpolation into inline styles (T-04-06).
 /// Accepts #rrggbb, #rgb, and oklch(...) shapes. Falls back to transparent/neutral.
@@ -93,20 +94,49 @@ fn epoch_days_to_mon_day(days: u64) -> String {
 /// - Meta row: priority pill, due chip, done badge, checklist, comments, attachments, avatars
 ///
 /// `data-card-id` and `data-list-id` attributes are included for Plan 03 hit-testing.
-/// Drag/pointer handlers are deferred to Plan 03 (additive signature extension point).
+/// `drag_info` prop enables Plan 03 pointer-events drag layer (additive).
 #[component]
 pub fn KanbanCard(
     card: RwSignal<Card>,
     labels_expanded: RwSignal<bool>,
     list_id: String,
+    drag_info: RwSignal<Option<DragInfo>>,
 ) -> impl IntoView {
     let list_id_clone = list_id.clone();
+    let list_id_for_drag = list_id.clone();
 
     view! {
         <div
             class="lns-card"
+            class:lns-card--dragging=move || {
+                drag_info.get().map_or(false, |d| d.is_dragging && d.card_id == card.get_untracked().id)
+            }
             attr:data-card-id=move || card.get_untracked().id.clone()
             attr:data-list-id=list_id_clone.clone()
+            on:pointerdown=move |ev: leptos::ev::PointerEvent| {
+                ev.prevent_default();
+                let card_id = card.get_untracked().id.clone();
+                let pointer_id = ev.pointer_id();
+                #[cfg(target_arch = "wasm32")]
+                {
+                    use wasm_bindgen::JsCast;
+                    if let Some(el) = ev.target()
+                        .and_then(|t| t.dyn_into::<leptos::web_sys::Element>().ok())
+                    {
+                        let _ = el.set_pointer_capture(pointer_id);
+                    }
+                }
+                drag_info.set(Some(DragInfo {
+                    card_id,
+                    from_list_id: list_id_for_drag.clone(),
+                    pointer_id,
+                    start_x: ev.client_x() as f64,
+                    start_y: ev.client_y() as f64,
+                    current_x: ev.client_x() as f64,
+                    current_y: ev.client_y() as f64,
+                    is_dragging: false,
+                }));
+            }
         >
             // ── Cover band ─────────────────────────────────────────────────
             <Show when=move || card.get().cover.is_some()>

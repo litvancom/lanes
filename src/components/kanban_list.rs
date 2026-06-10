@@ -36,6 +36,7 @@ pub fn KanbanList(
     let card_signals = board_signals.card_signals;
     let labels_expanded = board_signals.labels_expanded;
     let search = board_signals.search;
+    let drag_info = board_signals.drag_info;
 
     // --- Inline rename state ---
     let editing = RwSignal::new(false);
@@ -264,6 +265,7 @@ pub fn KanbanList(
                         card=card_sig
                         labels_expanded=labels_expanded
                         list_id=list_id_for_render.clone()
+                        drag_info=drag_info
                     />
                 </For>
             </div>

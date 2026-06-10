@@ -1090,12 +1090,14 @@ input, textarea {
   width: 280px;
   min-width: 280px;
   background: var(--bg-list);
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
   max-height: calc(100vh - 52px - 32px);
   overflow: hidden;
+  transition: background .12s, border-color .12s;
 }
 
 .lns-list-header {
@@ -1263,15 +1265,16 @@ input, textarea {
   border-color: var(--border-strong);
   box-shadow: var(--shadow);
 }
-/* Drag state */
-.lns-card.dragging {
+/* Drag state — both class patterns supported (.dragging legacy, .lns-card--dragging Plan 03) */
+.lns-card.dragging,
+.lns-card.lns-card--dragging {
   opacity: 0.3;
+  transition: opacity .12s;
 }
 /* Drag-over list highlight */
 .lns-list.drag-over {
   background: #e3e1dc;
   border-color: var(--accent);
-  transition: background .12s, border-color .12s;
 }
 
 .lns-card-stub-title {
