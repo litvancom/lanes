@@ -306,7 +306,20 @@ mod card_api_tests {
         use uuid::Uuid;
         use fractional_index::FractionalIndex;
         let id = Uuid::now_v7().to_string();
-        let pos = FractionalIndex::default().to_string();
+        // Append after existing lists to avoid UNIQUE constraint on (board_id, position)
+        let max_pos: Option<String> = sqlx::query_scalar(
+            "SELECT position FROM lists WHERE board_id = ? ORDER BY position DESC LIMIT 1"
+        )
+        .bind(board_id)
+        .fetch_optional(pool)
+        .await
+        .expect("query max pos");
+        let pos = match max_pos {
+            None => FractionalIndex::default().to_string(),
+            Some(p) => FractionalIndex::from_string(&p)
+                .map(|fi| FractionalIndex::new_after(&fi).to_string())
+                .unwrap_or_else(|_| FractionalIndex::default().to_string()),
+        };
         sqlx::query!(
             "INSERT INTO lists (id, board_id, name, position, archived) VALUES (?, ?, ?, ?, 0)",
             id, board_id, name, pos
@@ -438,6 +451,221 @@ mod card_api_tests {
             .await
             .expect("next_card_num");
         assert!(next_num > card2.card_num, "boards.next_card_num must be greater than last allocated num");
+    }
+
+    // -------------------------------------------------------------------------
+    // Helper: insert a list with is_done_list flag at the given position.
+    // -------------------------------------------------------------------------
+    pub async fn insert_list_with_done_flag(
+        pool: &sqlx::SqlitePool,
+        board_id: &str,
+        name: &str,
+        is_done: bool,
+    ) -> String {
+        use uuid::Uuid;
+        use fractional_index::FractionalIndex;
+        let id = Uuid::now_v7().to_string();
+        // Append after existing lists to avoid UNIQUE constraint on (board_id, position)
+        let max_pos: Option<String> = sqlx::query_scalar(
+            "SELECT position FROM lists WHERE board_id = ? ORDER BY position DESC LIMIT 1"
+        )
+        .bind(board_id)
+        .fetch_optional(pool)
+        .await
+        .expect("query max pos");
+        let pos = match max_pos {
+            None => FractionalIndex::default().to_string(),
+            Some(p) => FractionalIndex::from_string(&p)
+                .map(|fi| FractionalIndex::new_after(&fi).to_string())
+                .unwrap_or_else(|_| FractionalIndex::default().to_string()),
+        };
+        let done_flag = if is_done { 1i64 } else { 0i64 };
+        sqlx::query!(
+            "INSERT INTO lists (id, board_id, name, position, archived, is_done_list) VALUES (?, ?, ?, ?, 0, ?)",
+            id, board_id, name, pos, done_flag
+        )
+        .execute(pool)
+        .await
+        .expect("insert list with done flag");
+        id
+    }
+
+    // Helper: insert a card row directly.
+    pub async fn insert_card_direct(
+        pool: &sqlx::SqlitePool,
+        board_id: &str,
+        list_id: &str,
+        title: &str,
+        position: &str,
+    ) -> String {
+        use uuid::Uuid;
+        let id = Uuid::now_v7().to_string();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let card_num: i64 = sqlx::query_scalar(
+            "UPDATE boards SET next_card_num = next_card_num + 1 WHERE id = ? RETURNING next_card_num - 1"
+        )
+        .bind(board_id)
+        .fetch_one(pool)
+        .await
+        .expect("allocate card_num");
+        sqlx::query!(
+            r#"INSERT INTO cards (id, list_id, board_id, card_num, title, position,
+               done, archived, checklist_done, checklist_total, comment_count, attachment_count,
+               created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, ?, ?)"#,
+            id, list_id, board_id, card_num, title, position, now, now
+        )
+        .execute(pool)
+        .await
+        .expect("insert card");
+        id
+    }
+
+    // -------------------------------------------------------------------------
+    // move_card_inner tests (Task 1, Plan 03)
+    // -------------------------------------------------------------------------
+
+    /// An undecodable position string is rejected before any DB write.
+    #[tokio::test]
+    async fn test_move_card_invalid_position_rejected() {
+        use lanes::api::card_api::move_card_inner;
+        use fractional_index::FractionalIndex;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+        let user_id = insert_user_direct(&write_pool, "move_owner1@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Move Card Board 1").await;
+        insert_member_direct(&write_pool, &board_id, &user_id, "owner").await;
+        let list_id = insert_list_direct(&write_pool, &board_id, "Todo").await;
+        let pos = FractionalIndex::default().to_string();
+        let card_id = insert_card_direct(&write_pool, &board_id, &list_id, "Test card", &pos).await;
+
+        // Invalid position: not a valid fractional index
+        let result = move_card_inner(&write_pool, &board_id, &card_id, &list_id, "NOT_VALID_INDEX!!!").await;
+        assert!(result.is_err(), "invalid position must be rejected");
+
+        // Row must be unchanged
+        let (current_list_id, current_pos): (String, String) = sqlx::query_as(
+            "SELECT list_id, position FROM cards WHERE id = ?"
+        )
+        .bind(&card_id)
+        .fetch_one(&write_pool)
+        .await
+        .expect("fetch card");
+        assert_eq!(current_list_id, list_id, "list_id must not change");
+        assert_eq!(current_pos, pos, "position must not change");
+    }
+
+    /// Moving a card into a list with is_done_list=1 sets done=1.
+    #[tokio::test]
+    async fn test_move_card_into_done_list_sets_done() {
+        use lanes::api::card_api::move_card_inner;
+        use fractional_index::FractionalIndex;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+        let user_id = insert_user_direct(&write_pool, "move_owner2@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Move Card Board 2").await;
+        insert_member_direct(&write_pool, &board_id, &user_id, "owner").await;
+
+        let source_list_id = insert_list_direct(&write_pool, &board_id, "In Progress").await;
+        let done_list_id = insert_list_with_done_flag(&write_pool, &board_id, "Done", true).await;
+
+        let pos = FractionalIndex::default().to_string();
+        let card_id = insert_card_direct(&write_pool, &board_id, &source_list_id, "Task card", &pos).await;
+
+        // Verify card starts with done=0
+        let done_before: i64 = sqlx::query_scalar("SELECT done FROM cards WHERE id = ?")
+            .bind(&card_id)
+            .fetch_one(&write_pool)
+            .await
+            .expect("fetch done");
+        assert_eq!(done_before, 0, "card should start as not done");
+
+        // Move into done list
+        let new_pos = FractionalIndex::new_after(&FractionalIndex::default()).to_string();
+        move_card_inner(&write_pool, &board_id, &card_id, &done_list_id, &new_pos)
+            .await
+            .expect("move_card_inner should succeed");
+
+        let done_after: i64 = sqlx::query_scalar("SELECT done FROM cards WHERE id = ?")
+            .bind(&card_id)
+            .fetch_one(&write_pool)
+            .await
+            .expect("fetch done after");
+        assert_eq!(done_after, 1, "card moved to done list must have done=1");
+    }
+
+    /// Moving a card out of a done list into a normal list clears done (D-14).
+    #[tokio::test]
+    async fn test_move_card_out_of_done_list_clears_done() {
+        use lanes::api::card_api::move_card_inner;
+        use fractional_index::FractionalIndex;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+        let user_id = insert_user_direct(&write_pool, "move_owner3@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Move Card Board 3").await;
+        insert_member_direct(&write_pool, &board_id, &user_id, "owner").await;
+
+        let source_list_id = insert_list_direct(&write_pool, &board_id, "Todo").await;
+        let done_list_id = insert_list_with_done_flag(&write_pool, &board_id, "Done", true).await;
+
+        let pos = FractionalIndex::default().to_string();
+        let card_id = insert_card_direct(&write_pool, &board_id, &source_list_id, "Task card", &pos).await;
+
+        // Move into done list first
+        let pos2 = FractionalIndex::new_after(&FractionalIndex::default()).to_string();
+        move_card_inner(&write_pool, &board_id, &card_id, &done_list_id, &pos2)
+            .await
+            .expect("move into done");
+
+        // Now move back to a normal list
+        let pos3 = FractionalIndex::new_after(&FractionalIndex::from_string(&pos2).unwrap()).to_string();
+        move_card_inner(&write_pool, &board_id, &card_id, &source_list_id, &pos3)
+            .await
+            .expect("move out of done");
+
+        let done_final: i64 = sqlx::query_scalar("SELECT done FROM cards WHERE id = ?")
+            .bind(&card_id)
+            .fetch_one(&write_pool)
+            .await
+            .expect("fetch done final");
+        assert_eq!(done_final, 0, "card moved out of done list must have done=0");
+    }
+
+    /// move_card_inner persists list_id and position.
+    #[tokio::test]
+    async fn test_move_card_persists_list_and_position() {
+        use lanes::api::card_api::move_card_inner;
+        use fractional_index::FractionalIndex;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+        let user_id = insert_user_direct(&write_pool, "move_owner4@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Move Card Board 4").await;
+        insert_member_direct(&write_pool, &board_id, &user_id, "owner").await;
+
+        let list_a = insert_list_direct(&write_pool, &board_id, "Backlog").await;
+        let list_b = insert_list_direct(&write_pool, &board_id, "In Review").await;
+
+        let pos = FractionalIndex::default().to_string();
+        let card_id = insert_card_direct(&write_pool, &board_id, &list_a, "Card to move", &pos).await;
+
+        let new_pos = FractionalIndex::new_after(&FractionalIndex::default()).to_string();
+        move_card_inner(&write_pool, &board_id, &card_id, &list_b, &new_pos)
+            .await
+            .expect("move_card_inner should succeed");
+
+        let (persisted_list_id, persisted_pos): (String, String) = sqlx::query_as(
+            "SELECT list_id, position FROM cards WHERE id = ?"
+        )
+        .bind(&card_id)
+        .fetch_one(&write_pool)
+        .await
+        .expect("fetch card after move");
+
+        assert_eq!(persisted_list_id, list_b, "list_id must be persisted");
+        assert_eq!(persisted_pos, new_pos, "position must be persisted");
     }
 
     /// is_done_list is populated on the list returned by get_board_inner.

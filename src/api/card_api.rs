@@ -102,6 +102,52 @@ pub async fn create_card_inner(
     })
 }
 
+/// Move a card to a new list and position, deriving done from the target list's is_done_list flag.
+///
+/// Security: UPDATE is scoped by card_id AND board_id (T-04-11).
+/// Position: validated before any write (T-04-09).
+/// Done: server-derived from target list's is_done_list — client cannot force done=true (T-04-10).
+#[cfg(feature = "ssr")]
+pub async fn move_card_inner(
+    pool: &sqlx::SqlitePool,
+    board_id: &str,
+    card_id: &str,
+    to_list_id: &str,
+    new_position: &str,
+) -> Result<(), sqlx::Error> {
+    use fractional_index::FractionalIndex;
+    use crate::server::now_millis;
+
+    // 1. Validate position before any DB write (mirrors reorder_list_inner, T-04-09)
+    FractionalIndex::from_string(new_position).map_err(|_| {
+        sqlx::Error::Decode("invalid position: not a valid fractional index".into())
+    })?;
+
+    // 2. Derive done from target list's is_done_list flag (D-14, T-04-10)
+    let target_is_done: bool = sqlx::query_scalar(
+        "SELECT CAST(is_done_list AS BOOLEAN) FROM lists WHERE id = ?"
+    )
+    .bind(to_list_id)
+    .fetch_one(pool)
+    .await?;
+
+    // 3. UPDATE scoped by id AND board_id (T-04-11: cross-board card_id matches no row)
+    let now = now_millis().map_err(|_| sqlx::Error::Decode("clock error".into()))?;
+    sqlx::query(
+        "UPDATE cards SET list_id = ?, position = ?, done = ?, updated_at = ? WHERE id = ? AND board_id = ?"
+    )
+    .bind(to_list_id)
+    .bind(new_position)
+    .bind(target_is_done as i64)
+    .bind(now)
+    .bind(card_id)
+    .bind(board_id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Server functions (Leptos #[server] wrappers around inner fns)
 // ---------------------------------------------------------------------------
@@ -145,5 +191,41 @@ pub async fn create_card(
         .map_err(|e| {
             tracing::error!("create_card_inner error: {e}");
             ServerFnError::new("Failed to create card")
+        })
+}
+
+/// Move a card to a different list and/or position.
+///
+/// Enforces board membership first (T-04-08).
+/// Re-validates position string (T-04-09 — double validation mirrors reorder_list).
+/// Does NOT accept a `done` parameter — done is server-derived from is_done_list (T-04-10).
+/// UPDATE scoped by card_id AND board_id (T-04-11).
+#[server]
+pub async fn move_card(
+    board_id: String,
+    card_id: String,
+    to_list_id: String,
+    new_position: String,
+) -> Result<(), ServerFnError> {
+    use crate::auth::helpers::require_board_member;
+    use crate::server::state::AppState;
+
+    let state = expect_context::<AppState>();
+
+    // Auth + membership gate first (T-04-08)
+    require_board_member(&board_id, &state.read_pool.0).await?;
+
+    // Re-validate position (T-04-09: mirrors reorder_list wrapper lines 237-242)
+    {
+        use fractional_index::FractionalIndex;
+        FractionalIndex::from_string(&new_position)
+            .map_err(|_| ServerFnError::new("invalid position"))?;
+    }
+
+    move_card_inner(&state.write_pool.0, &board_id, &card_id, &to_list_id, &new_position)
+        .await
+        .map_err(|e| {
+            tracing::error!("move_card_inner error: {e}");
+            ServerFnError::new("Failed to move card")
         })
 }
