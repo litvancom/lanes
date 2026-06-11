@@ -8,15 +8,15 @@
 //! multiple boards (not multi-tab: a second WS for the same user on the same board
 //! overwrites the presence entry and the viewer appears once in the list).
 //!
-//! Plan 06-01 stubs `join`, `leave`, and `heartbeat` — only `subscribe` and
-//! `snapshot` are needed so `ws_handler` compiles. Plan 06-04 fills the full logic.
+//! Full implementation for 06-04: join/leave/heartbeat/set_editing/set_typing/
+//! snapshot/sweep_once. The background sweep task is spawned once in start_server.
 
 #[cfg(feature = "ssr")]
 use dashmap::DashMap;
 #[cfg(feature = "ssr")]
 use std::sync::Arc;
 #[cfg(feature = "ssr")]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 #[cfg(feature = "ssr")]
 use tokio::sync::broadcast;
 #[cfg(feature = "ssr")]
@@ -62,13 +62,14 @@ impl PresenceRegistry {
 
     /// Subscribe to presence events for a board.
     ///
-    /// Creates the broadcast channel on first access. The WS handler subscribes
-    /// BEFORE building the snapshot (Pitfall 3: subscribe first, then snapshot,
-    /// so any ViewerLeft emitted between the two is not missed).
+    /// Creates the broadcast channel on first access (capacity 1024 — presence is
+    /// high-churn; Lagged just resends a snapshot rather than Refresh).
+    /// The WS handler subscribes BEFORE building the snapshot (Pitfall 3: subscribe first,
+    /// then snapshot, so any ViewerLeft emitted between the two is not missed).
     pub fn subscribe(&self, board_id: &str) -> broadcast::Receiver<PresenceEvent> {
         self.presence_tx
             .entry(board_id.to_string())
-            .or_insert_with(|| broadcast::channel(64).0)
+            .or_insert_with(|| broadcast::channel(1024).0)
             .subscribe()
     }
 
@@ -96,7 +97,8 @@ impl PresenceRegistry {
 
     /// Record a viewer joining a board and broadcast ViewerJoined to others.
     ///
-    /// Stubbed in 06-01 — full logic in 06-04.
+    /// Inserts/replaces the viewer entry. Broadcasting uses the sender directly,
+    /// so any existing subscriber will receive the ViewerJoined event.
     pub fn join(&self, board_id: &str, user: &AuthUser, _client_id: &str) {
         let key = format!("{}:{}", board_id, user.id);
         self.viewers.insert(
@@ -111,19 +113,19 @@ impl PresenceRegistry {
                 typing_in_card_id: None,
             },
         );
-        // Broadcast ViewerJoined to other viewers (06-04 will wire the full channel logic)
-        if let Some(tx) = self.presence_tx.get(board_id) {
-            let _ = tx.send(PresenceEvent::ViewerJoined {
-                user_id: user.id.clone(),
-                display_name: user.display_name.clone(),
-                avatar_color: user.avatar_color.clone(),
-            });
-        }
+        // Broadcast ViewerJoined to other viewers on this board.
+        // Use entry-or-insert so the channel is created if this is the first viewer.
+        let tx = self.presence_tx
+            .entry(board_id.to_string())
+            .or_insert_with(|| broadcast::channel(1024).0);
+        let _ = tx.send(PresenceEvent::ViewerJoined {
+            user_id: user.id.clone(),
+            display_name: user.display_name.clone(),
+            avatar_color: user.avatar_color.clone(),
+        });
     }
 
     /// Record a viewer leaving a board and broadcast ViewerLeft to others.
-    ///
-    /// Stubbed in 06-01 — full logic in 06-04.
     pub fn leave(&self, board_id: &str, user_id: &str) {
         let key = format!("{}:{}", board_id, user_id);
         self.viewers.remove(&key);
@@ -136,11 +138,91 @@ impl PresenceRegistry {
 
     /// Update the heartbeat timestamp for a viewer.
     ///
-    /// Stubbed in 06-01 — full logic in 06-04.
+    /// No broadcast — heartbeats are purely a liveness signal.
     pub fn heartbeat(&self, board_id: &str, user_id: &str) {
         let key = format!("{}:{}", board_id, user_id);
         if let Some(mut entry) = self.viewers.get_mut(&key) {
             entry.last_heartbeat = Instant::now();
+        }
+    }
+
+    /// Update the card being edited by a viewer and broadcast EditingCard.
+    ///
+    /// `card_id = None` means the viewer stopped editing.
+    /// T-6-14: user_id comes from the validated AuthSession in the WS handler, not from the message.
+    pub fn set_editing(&self, board_id: &str, user_id: &str, card_id: Option<String>) {
+        let key = format!("{}:{}", board_id, user_id);
+        if let Some(mut entry) = self.viewers.get_mut(&key) {
+            entry.editing_card_id = card_id.clone();
+        }
+        if let Some(tx) = self.presence_tx.get(board_id) {
+            let _ = tx.send(PresenceEvent::EditingCard {
+                user_id: user_id.to_string(),
+                card_id,
+            });
+        }
+    }
+
+    /// Update the typing state for a viewer in a card's comment field and broadcast Typing.
+    ///
+    /// T-6-14: user_id comes from the validated AuthSession in the WS handler, not from the message.
+    pub fn set_typing(&self, board_id: &str, user_id: &str, card_id: &str, is_typing: bool) {
+        let key = format!("{}:{}", board_id, user_id);
+        if let Some(mut entry) = self.viewers.get_mut(&key) {
+            entry.typing_in_card_id = if is_typing {
+                Some(card_id.to_string())
+            } else {
+                None
+            };
+        }
+        if let Some(tx) = self.presence_tx.get(board_id) {
+            let _ = tx.send(PresenceEvent::Typing {
+                user_id: user_id.to_string(),
+                card_id: card_id.to_string(),
+                is_typing,
+            });
+        }
+    }
+
+    /// Reap viewers whose last_heartbeat is older than 15 seconds (D-13 / T-6-15).
+    ///
+    /// Takes an explicit `now: Instant` so tests can control time deterministically
+    /// without requiring tokio::time::pause to affect std::time::Instant.
+    ///
+    /// Called by the background sweep loop in start_server every 10 seconds (Anti-Pattern §717).
+    pub fn sweep_once(&self, now: Instant) {
+        let threshold = Duration::from_secs(15);
+
+        // Collect stale keys first to avoid holding DashMap locks across the remove + broadcast.
+        let stale: Vec<(String, String)> = self
+            .viewers
+            .iter()
+            .filter(|entry| {
+                now.duration_since(entry.value().last_heartbeat) > threshold
+            })
+            .map(|entry| {
+                let v = entry.value();
+                (entry.key().clone(), v.board_id.clone())
+            })
+            .collect();
+
+        for (key, board_id) in stale {
+            // Extract user_id from the key (format: "{board_id}:{user_id}")
+            let user_id = if let Some(colon) = key.find(':') {
+                key[colon + 1..].to_string()
+            } else {
+                continue;
+            };
+
+            // Remove the viewer
+            self.viewers.remove(&key);
+
+            // Broadcast ViewerLeft to remaining board viewers (T-6-15 reap)
+            if let Some(tx) = self.presence_tx.get(&board_id) {
+                let _ = tx.send(PresenceEvent::ViewerLeft {
+                    user_id,
+                });
+            }
         }
     }
 }

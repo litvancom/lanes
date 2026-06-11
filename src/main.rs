@@ -172,8 +172,22 @@ async fn start_server() {
         storage,
         board_rooms,
         user_notifs,
-        presence,
+        presence: presence.clone(),
     };
+
+    // Presence sweep background task (Anti-Pattern §717: spawn once in start_server).
+    // Every 10 seconds, reap viewers whose last_heartbeat is > 15s stale (D-13 / T-6-15).
+    {
+        use std::time::Instant;
+        use std::time::Duration;
+        let sweep_presence = presence;
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                sweep_presence.sweep_once(Instant::now());
+            }
+        });
+    }
 
     let app = Router::new()
         // Attachment upload/download routes (plain Axum — not Leptos server fns, DETAIL-08).

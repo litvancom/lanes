@@ -241,8 +241,10 @@ async fn handle_ws(mut socket: WebSocket, board_id: String, user: AuthUser, stat
 ///   - `{"type":"presence_join"}` — tab became visible (D-12)
 ///   - `{"type":"presence_leave"}` — tab became hidden (D-12)
 ///   - `{"type":"typing", "card_id":"...", "is_typing":true}` — D-10
+///   - `{"type":"editing", "card_id":"..."}` or `{"type":"editing"}` (no card_id = stopped) — D-10
 ///
-/// All branches are stubbed in 06-01. Plan 06-04 implements the full logic.
+/// T-6-14: All presence mutations use `user.id` from the validated AuthSession.
+/// Any `user_id` field present in the client message is silently ignored.
 #[cfg(feature = "ssr")]
 async fn handle_client_message(
     text: &str,
@@ -250,33 +252,64 @@ async fn handle_client_message(
     user: &AuthUser,
     state: &AppState,
 ) {
-    // Parse just the "type" field to route the message
-    let msg_type: Option<String> = serde_json::from_str::<serde_json::Value>(text)
-        .ok()
-        .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(str::to_string));
+    // Parse the entire message so we can extract additional fields for typing/editing.
+    let value: serde_json::Value = match serde_json::from_str(text) {
+        Ok(v) => v,
+        Err(_) => {
+            tracing::warn!(user_id = %user.id, board_id, "malformed client message (invalid JSON): {text}");
+            return;
+        }
+    };
 
-    match msg_type.as_deref() {
-        Some("heartbeat") => {
-            // Update viewer's last_heartbeat (stub: 06-04 wires full logic)
+    let msg_type = value
+        .get("type")
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
+
+    match msg_type {
+        "heartbeat" => {
+            // Update viewer's last_heartbeat (D-13).
             state.presence.heartbeat(board_id, &user.id);
         }
-        Some("presence_join") => {
-            // Tab became visible again (stub: 06-04)
-            tracing::debug!(user_id = %user.id, board_id, "presence_join received");
+        "presence_join" => {
+            // Tab became visible again — re-join presence (D-12).
+            // Use a no-op AuthUser reconstruction via the existing user reference.
+            // The user is already validated; we just need to re-register in the registry.
+            state.presence.join(board_id, user, "");
+            tracing::debug!(user_id = %user.id, board_id, "presence_join: viewer rejoined");
         }
-        Some("presence_leave") => {
-            // Tab hidden — best-effort early leave (stub: 06-04)
-            tracing::debug!(user_id = %user.id, board_id, "presence_leave received");
+        "presence_leave" => {
+            // Tab hidden — best-effort early leave (D-12).
+            // The sweep will reap them anyway within 15s, but this is faster.
+            state.presence.leave(board_id, &user.id);
+            tracing::debug!(user_id = %user.id, board_id, "presence_leave: viewer early-left");
         }
-        Some("typing") => {
-            // Typing indicator (stub: 06-04)
-            tracing::debug!(user_id = %user.id, board_id, "typing received");
+        "typing" => {
+            // Typing indicator — T-6-14: user_id from session, not from message.
+            let card_id = value
+                .get("card_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let is_typing = value
+                .get("is_typing")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if !card_id.is_empty() {
+                state.presence.set_typing(board_id, &user.id, card_id, is_typing);
+            }
         }
-        Some(other) => {
+        "editing" => {
+            // Editing indicator — card_id present = started editing; absent/null = stopped.
+            // T-6-14: user_id from session.
+            let card_id: Option<String> = value
+                .get("card_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            state.presence.set_editing(board_id, &user.id, card_id);
+        }
+        other => {
             tracing::debug!(user_id = %user.id, board_id, msg_type = other, "unknown client message type");
-        }
-        None => {
-            tracing::warn!(user_id = %user.id, board_id, "malformed client message (no type): {text}");
         }
     }
 }
