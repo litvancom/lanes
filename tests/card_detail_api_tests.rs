@@ -78,18 +78,31 @@ mod card_detail_api_tests {
     // -------------------------------------------------------------------------
 
     /// render_markdown must sanitize XSS: script tags removed, bold preserved.
+    ///
+    /// Note: pulldown-cmark treats `<script>` as an HTML block (type 6), consuming
+    /// text up to a blank line. With a blank line separator, the next paragraph is
+    /// processed as Markdown. Tests verify the two independent properties:
+    /// (1) script is stripped, (2) Markdown bold renders as <strong>.
     #[tokio::test]
     async fn test_render_markdown_strips_xss() {
         use lanes::api::card_detail_api::render_markdown;
 
-        let output = render_markdown("<script>alert(1)</script>**hi**");
+        // XSS: script tags must be stripped (inline HTML block followed by blank line + bold)
+        let xss_output = render_markdown("<script>alert(1)</script>\n\n**hi**");
         assert!(
-            output.contains("<strong>hi</strong>"),
-            "bold should be rendered as <strong>hi</strong>, got: {output}"
+            !xss_output.contains("<script>"),
+            "script tag must be stripped by ammonia, got: {xss_output}"
         );
         assert!(
-            !output.contains("<script>"),
-            "script tag must be stripped by ammonia, got: {output}"
+            xss_output.contains("<strong>hi</strong>"),
+            "bold after script block should render as <strong>hi</strong>, got: {xss_output}"
+        );
+
+        // Markdown rendering: pure markdown input without raw HTML
+        let md_output = render_markdown("**bold**");
+        assert!(
+            md_output.contains("<strong>bold</strong>"),
+            "pure markdown bold must render as <strong>bold</strong>, got: {md_output}"
         );
     }
 

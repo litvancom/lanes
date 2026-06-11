@@ -38,7 +38,7 @@ rand = { version = "0.10", features = ["std"], optional = true }
 async-trait = { version = "0.1", optional = true }
 pulldown-cmark = { version = "0.13", optional = true }
 ammonia = { version = "4", optional = true }
-object_store = { version = "0.13", features = ["local"], optional = true }
+object_store = { version = "0.13", features = ["fs"], optional = true }
 
 # --- Hydrate only (WASM) ---
 console_error_panic_hook = { version = "0.1", optional = true }

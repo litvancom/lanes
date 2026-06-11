@@ -4,3 +4,4 @@ pub mod invite_api;
 pub mod list_api;
 pub mod board_api;
 pub mod card_api;
+pub mod card_detail_api;

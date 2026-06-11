@@ -95,3 +95,75 @@ pub struct Card {
     /// IDs of users assigned to this card (from card_members).
     pub member_ids: Vec<String>,
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5: Card Detail DTOs
+// ---------------------------------------------------------------------------
+
+/// Lightweight user representation used in card detail views (board members, activity authors).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct UserSummary {
+    pub id: String,
+    pub display_name: String,
+    pub avatar_color: String,
+}
+
+/// A single item in a checklist (belongs to a checklist, which belongs to a card).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ChecklistItem {
+    pub id: String,
+    pub checklist_id: String,
+    pub text: String,
+    pub done: bool,
+    pub position: i64,
+}
+
+/// A single entry in the card activity feed — either a user comment or a system event.
+/// `entry_type` is "comment" | "event".
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ActivityEntry {
+    /// "comment" or "event"
+    pub entry_type: String,
+    pub id: String,
+    /// Author of the comment or actor who triggered the event; None for system-generated events.
+    pub author: Option<UserSummary>,
+    /// Comment body text, or event kind string (e.g. "moved", "archived").
+    pub text: String,
+    /// JSON payload for system events (e.g. `{"from_list":"...","to_list":"..."}`); None for comments.
+    pub payload: Option<String>,
+    pub created_at: i64,
+}
+
+/// A file attached to a card.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Attachment {
+    pub id: String,
+    pub card_id: String,
+    pub filename: String,
+    pub url: String,
+    pub size_bytes: i64,
+    pub uploader_id: String,
+    pub created_at: i64,
+}
+
+/// Full card detail payload returned by `get_card_detail`.
+/// Consumed by the card-detail modal and all Phase 5 slices.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct CardDetail {
+    /// The card itself (with labels, member_ids, denormalized counts).
+    pub card: Card,
+    /// Card description rendered from Markdown through ammonia (pre-sanitized HTML).
+    pub description_html: String,
+    /// Checklist items for this card, ordered by position ASC.
+    pub checklist_items: Vec<ChecklistItem>,
+    /// Activity feed: comments + system events, ordered by created_at ASC.
+    pub activity: Vec<ActivityEntry>,
+    /// File attachments for this card.
+    pub attachments: Vec<Attachment>,
+    /// Number of users watching this card.
+    pub watcher_count: i64,
+    /// Whether the current user is watching this card.
+    pub is_watching: bool,
+    /// All board members (for member picker and author resolution).
+    pub board_members: Vec<UserSummary>,
+}
