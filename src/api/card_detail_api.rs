@@ -904,6 +904,207 @@ pub async fn update_card_description(
 }
 
 // ---------------------------------------------------------------------------
+// Activity inner functions: log_card_event_inner + add_comment_inner
+// ---------------------------------------------------------------------------
+
+/// Internal: insert a card_events row.
+///
+/// Allowed kind values: 'created'|'moved'|'archived'|'member_added'|'member_removed'.
+///
+/// Callable independently (Plan 06 will call this for archive/move/member events).
+/// Uses a pool reference so it can be called outside a transaction.
+#[cfg(feature = "ssr")]
+pub async fn log_card_event_inner(
+    pool: &sqlx::SqlitePool,
+    card_id: &str,
+    actor_id: Option<&str>,
+    kind: &str,
+    payload: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    use uuid::Uuid;
+    use crate::server::now_millis;
+
+    let id = Uuid::now_v7().to_string();
+    let now = now_millis().map_err(|_| sqlx::Error::Decode("clock error".into()))?;
+
+    sqlx::query(
+        "INSERT INTO card_events (id, card_id, actor_id, kind, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(card_id)
+    .bind(actor_id)
+    .bind(kind)
+    .bind(payload)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+/// Internal: post a comment on a card.
+///
+/// Transaction steps:
+/// 1. Trim body; reject empty.
+/// 2. INSERT INTO comments.
+/// 3. UPDATE cards SET comment_count = (SELECT COUNT(*) ...) in the same tx (Pitfall 3).
+/// 4. INSERT OR IGNORE INTO watchers for the author (D-12 auto-watch).
+/// 5. For each distinct mention_user_id where user != author AND user is a board member:
+///    INSERT INTO notifications (kind='mention', read=0).
+///
+/// Returns the new comment as an ActivityEntry (entry_type "comment").
+#[cfg(feature = "ssr")]
+pub async fn add_comment_inner(
+    pool: &sqlx::SqlitePool,
+    board_id: &str,
+    card_id: &str,
+    author_id: &str,
+    body: String,
+    mention_user_ids: Vec<String>,
+) -> Result<crate::models::ActivityEntry, sqlx::Error> {
+    use uuid::Uuid;
+    use crate::server::now_millis;
+    use std::collections::HashSet;
+
+    let body = body.trim().to_string();
+    if body.is_empty() {
+        return Err(sqlx::Error::Decode("Comment body cannot be empty".into()));
+    }
+
+    let now = now_millis().map_err(|_| sqlx::Error::Decode("clock error".into()))?;
+    let comment_id = Uuid::now_v7().to_string();
+
+    let mut tx = pool.begin().await?;
+
+    // 1. INSERT INTO comments
+    sqlx::query(
+        "INSERT INTO comments (id, card_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&comment_id)
+    .bind(card_id)
+    .bind(author_id)
+    .bind(&body)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+
+    // 2. Recount + UPDATE cards.comment_count in the same transaction (Pitfall 3)
+    let new_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM comments WHERE card_id = ?",
+    )
+    .bind(card_id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    sqlx::query("UPDATE cards SET comment_count = ? WHERE id = ?")
+        .bind(new_count)
+        .bind(card_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // 3. Auto-watch: INSERT OR IGNORE the author into watchers (D-12)
+    sqlx::query("INSERT OR IGNORE INTO watchers (card_id, user_id) VALUES (?, ?)")
+        .bind(card_id)
+        .bind(author_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // 4. Mention notifications: only for distinct board members who are not the author
+    let deduped: HashSet<String> = mention_user_ids.into_iter().collect();
+    for uid in deduped {
+        if uid == author_id {
+            // Self-mention suppressed (D-11, T-05-15)
+            continue;
+        }
+        // Verify the mentioned user is a board member (T-05-14)
+        let is_member: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM board_members WHERE board_id = ? AND user_id = ?",
+        )
+        .bind(board_id)
+        .bind(&uid)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        if is_member.is_none() {
+            // Not a board member — no notification (T-05-14)
+            continue;
+        }
+
+        let notif_id = Uuid::now_v7().to_string();
+        sqlx::query(
+            "INSERT INTO notifications (id, user_id, board_id, card_id, kind, read, created_at) VALUES (?, ?, ?, ?, 'mention', 0, ?)",
+        )
+        .bind(&notif_id)
+        .bind(&uid)
+        .bind(board_id)
+        .bind(card_id)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+
+    // 5. Resolve author UserSummary for the returned ActivityEntry
+    let author_row: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT id, display_name, avatar_color FROM users WHERE id = ?",
+    )
+    .bind(author_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let author = author_row.map(|(id, display_name, avatar_color)| {
+        crate::models::UserSummary { id, display_name, avatar_color }
+    });
+
+    Ok(crate::models::ActivityEntry {
+        entry_type: "comment".to_string(),
+        id: comment_id,
+        author,
+        text: body,
+        payload: None,
+        created_at: now,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Activity server function wrapper
+// ---------------------------------------------------------------------------
+
+/// Post a comment on a card (auth-guarded, board-member-scoped).
+///
+/// Security (T-05-16): board membership required; comment scoped to card on that board.
+/// Security (T-05-13): comment body returned as ActivityEntry.text — rendered as text node in UI.
+/// Security (T-05-14/15): mention notifications only for board members; self excluded.
+#[server]
+pub async fn add_comment(
+    board_id: String,
+    card_id: String,
+    body: String,
+    mention_user_ids: Vec<String>,
+) -> Result<crate::models::ActivityEntry, ServerFnError> {
+    use crate::auth::helpers::require_board_member;
+    use crate::server::state::AppState;
+
+    let state = expect_context::<AppState>();
+    let (user, _role) = require_board_member(&board_id, &state.read_pool.0).await?;
+
+    add_comment_inner(
+        &state.write_pool.0,
+        &board_id,
+        &card_id,
+        &user.id,
+        body,
+        mention_user_ids,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("add_comment error: {e}");
+        ServerFnError::new("Couldn't save changes. Try again.")
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Server function wrapper — read
 // ---------------------------------------------------------------------------
 
