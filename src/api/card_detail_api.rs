@@ -1134,6 +1134,270 @@ pub async fn get_card_detail(
 }
 
 // ---------------------------------------------------------------------------
+// Move (cross-board), watch/unwatch, archive inner functions (SSR-only)
+// ---------------------------------------------------------------------------
+
+/// Internal: move a card to a different board (DETAIL-09, D-04/D-05/D-06, T-05-23/24/25).
+///
+/// One transaction:
+/// 1. Verify target list belongs to to_board_id.
+/// 2. Allocate a new card_num on to_board_id (mirrors create_card_inner).
+/// 3. UPDATE cards: board_id, list_id, card_num, position, updated_at (scoped by id AND from_board_id).
+/// 4. DELETE card_labels (board-scoped labels cannot carry — D-05, T-05-24).
+/// 5. DELETE card_members not in the target board's membership (D-05, T-05-24).
+/// 6. Log a card_events 'moved' entry with payload (D-06).
+///
+/// Child rows (comments, attachments, checklists, checklist_items) carry automatically
+/// because they are keyed by card_id, not board_id (A3 from RESEARCH.md).
+///
+/// Returns the new card_num allocated on the target board.
+#[cfg(feature = "ssr")]
+pub async fn move_card_cross_board_inner(
+    pool: &sqlx::SqlitePool,
+    from_board_id: &str,
+    card_id: &str,
+    to_board_id: &str,
+    to_list_id: &str,
+    new_position: &str,
+) -> Result<i64, sqlx::Error> {
+    use fractional_index::FractionalIndex;
+    use crate::server::now_millis;
+
+    // Validate position before any write (T-04-09 pattern)
+    FractionalIndex::from_string(new_position).map_err(|_| {
+        sqlx::Error::Decode("invalid position: not a valid fractional index".into())
+    })?;
+
+    let now = now_millis().map_err(|_| sqlx::Error::Decode("clock error".into()))?;
+
+    let mut tx = pool.begin().await?;
+
+    // 1. Verify target list belongs to to_board_id (T-05-23)
+    let list_board: Option<String> = sqlx::query_scalar(
+        "SELECT board_id FROM lists WHERE id = ?"
+    )
+    .bind(to_list_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    match list_board {
+        None => return Err(sqlx::Error::Decode("target list not found".into())),
+        Some(lb) if lb != to_board_id => return Err(sqlx::Error::Decode("target list not on to_board_id".into())),
+        _ => {}
+    }
+
+    // 2. Allocate a new card_num on to_board_id (mirrors create_card_inner — WR-02)
+    let new_card_num: i64 = sqlx::query_scalar(
+        "UPDATE boards SET next_card_num = next_card_num + 1 WHERE id = ? RETURNING next_card_num - 1"
+    )
+    .bind(to_board_id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    // 3. UPDATE the card (scoped by id AND from_board_id — T-05-25)
+    sqlx::query(
+        "UPDATE cards SET board_id = ?, list_id = ?, card_num = ?, position = ?, updated_at = ? WHERE id = ? AND board_id = ?"
+    )
+    .bind(to_board_id)
+    .bind(to_list_id)
+    .bind(new_card_num)
+    .bind(new_position)
+    .bind(now)
+    .bind(card_id)
+    .bind(from_board_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // 4. DELETE all card_labels (board-scoped labels cannot carry — D-05, T-05-24)
+    sqlx::query("DELETE FROM card_labels WHERE card_id = ?")
+        .bind(card_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // 5. DELETE card_members whose user_id is NOT in the target board's membership (D-05, T-05-24)
+    sqlx::query(
+        "DELETE FROM card_members WHERE card_id = ? AND user_id NOT IN (SELECT user_id FROM board_members WHERE board_id = ?)"
+    )
+    .bind(card_id)
+    .bind(to_board_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // 6. Log a card_events 'moved' entry (D-06)
+    {
+        use uuid::Uuid;
+        let event_id = Uuid::now_v7().to_string();
+        let payload = format!(r#"{{"from_board":"{}","to_board":"{}"}}"#, from_board_id, to_board_id);
+        sqlx::query(
+            "INSERT INTO card_events (id, card_id, actor_id, kind, payload, created_at) VALUES (?, ?, NULL, 'moved', ?, ?)"
+        )
+        .bind(&event_id)
+        .bind(card_id)
+        .bind(&payload)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+
+    Ok(new_card_num)
+}
+
+/// Internal: add a watcher for a card.
+///
+/// Uses INSERT OR IGNORE (idempotent). Returns the new distinct watcher count.
+#[cfg(feature = "ssr")]
+pub async fn watch_card_inner(
+    pool: &sqlx::SqlitePool,
+    card_id: &str,
+    user_id: &str,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query("INSERT OR IGNORE INTO watchers (card_id, user_id) VALUES (?, ?)")
+        .bind(card_id)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM watchers WHERE card_id = ?")
+        .bind(card_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(count)
+}
+
+/// Internal: remove a watcher from a card.
+///
+/// DELETE is idempotent. Returns the new distinct watcher count.
+#[cfg(feature = "ssr")]
+pub async fn unwatch_card_inner(
+    pool: &sqlx::SqlitePool,
+    card_id: &str,
+    user_id: &str,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query("DELETE FROM watchers WHERE card_id = ? AND user_id = ?")
+        .bind(card_id)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM watchers WHERE card_id = ?")
+        .bind(card_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(count)
+}
+
+/// Internal: archive a card (sets archived=1 scoped by id AND board_id) and logs the event.
+///
+/// Security: UPDATE scoped by id AND board_id (T-05-26). Absent from get_board_inner after this.
+#[cfg(feature = "ssr")]
+pub async fn archive_card_inner(
+    pool: &sqlx::SqlitePool,
+    board_id: &str,
+    card_id: &str,
+) -> Result<(), sqlx::Error> {
+    use crate::server::now_millis;
+    let now = now_millis().map_err(|_| sqlx::Error::Decode("clock error".into()))?;
+
+    sqlx::query(
+        "UPDATE cards SET archived = 1, updated_at = ? WHERE id = ? AND board_id = ?"
+    )
+    .bind(now)
+    .bind(card_id)
+    .bind(board_id)
+    .execute(pool)
+    .await?;
+
+    // Log a card_events 'archived' entry
+    log_card_event_inner(pool, card_id, None, "archived", None).await?;
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Server function wrappers: move_card_cross_board, watch_card, archive_card
+// ---------------------------------------------------------------------------
+
+/// Move a card to another board (full cross-board semantics — DETAIL-09, D-04/D-05/D-06).
+///
+/// Caller must be a member of BOTH the source and target board (T-05-23).
+/// Same-board list moves reuse the existing `move_card` server fn from card_api.rs.
+#[server]
+pub async fn move_card_cross_board(
+    from_board_id: String,
+    card_id: String,
+    to_board_id: String,
+    to_list_id: String,
+    new_position: String,
+) -> Result<i64, ServerFnError> {
+    use crate::auth::helpers::require_board_member;
+    use crate::server::state::AppState;
+    let state = expect_context::<AppState>();
+    // Must be member of BOTH boards (T-05-23)
+    require_board_member(&from_board_id, &state.read_pool.0).await?;
+    require_board_member(&to_board_id, &state.read_pool.0).await?;
+    move_card_cross_board_inner(
+        &state.write_pool.0,
+        &from_board_id,
+        &card_id,
+        &to_board_id,
+        &to_list_id,
+        &new_position,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("move_card_cross_board error: {e}");
+        ServerFnError::new("Couldn't move card. Try again.")
+    })
+}
+
+/// Watch or unwatch a card (auth-guarded, returns updated distinct watcher count).
+///
+/// Security (T-05-26): board membership required.
+#[server]
+pub async fn watch_card(
+    board_id: String,
+    card_id: String,
+    watch: bool,
+) -> Result<i64, ServerFnError> {
+    use crate::auth::helpers::require_board_member;
+    use crate::server::state::AppState;
+    let state = expect_context::<AppState>();
+    let (user, _role) = require_board_member(&board_id, &state.read_pool.0).await?;
+    let pool = &state.write_pool.0;
+    let count = if watch {
+        watch_card_inner(pool, &card_id, &user.id).await
+    } else {
+        unwatch_card_inner(pool, &card_id, &user.id).await
+    };
+    count.map_err(|e| {
+        tracing::error!("watch_card error: {e}");
+        ServerFnError::new("Couldn't update watch status. Try again.")
+    })
+}
+
+/// Archive a card (auth-guarded, board-member-scoped — T-05-26).
+///
+/// Card is removed from get_board_inner after this (archived=1 filtered out).
+#[server]
+pub async fn archive_card(
+    board_id: String,
+    card_id: String,
+) -> Result<(), ServerFnError> {
+    use crate::auth::helpers::require_board_member;
+    use crate::server::state::AppState;
+    let state = expect_context::<AppState>();
+    require_board_member(&board_id, &state.read_pool.0).await?;
+    archive_card_inner(&state.write_pool.0, &board_id, &card_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("archive_card error: {e}");
+            ServerFnError::new("Couldn't archive card. Try again.")
+        })
+}
+
+// ---------------------------------------------------------------------------
 // Attachment inner function (SSR-only)
 // ---------------------------------------------------------------------------
 
