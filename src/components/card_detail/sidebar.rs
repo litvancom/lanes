@@ -345,11 +345,16 @@ pub fn SidebarColumn(
                                             let pos = default_pos_clone.clone();
                                             if tboard == bid {
                                                 // Same-board: use Phase 4 move_card
+                                                // D-05: read own_client_id from BoardSignals context for highlight suppression.
+                                                let client_id = use_context::<crate::routes::board::BoardSignals>()
+                                                    .and_then(|bs| bs.own_client_id.get_untracked())
+                                                    .unwrap_or_default();
                                                 move_action.dispatch(MoveCard {
                                                     board_id: bid,
                                                     card_id: cid,
                                                     to_list_id: tlist,
                                                     new_position: pos,
+                                                    client_id,
                                                 });
                                             } else {
                                                 // Cross-board: use move_card_cross_board

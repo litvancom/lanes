@@ -234,6 +234,12 @@ pub async fn create_card(
 /// UPDATE scoped by card_id AND board_id (T-04-11).
 /// Verifies the target list belongs to the authorized board (CR-01) before writing.
 ///
+/// `client_id`: opaque per-connection UUID supplied by the browser (D-05/Flag 2).
+/// It is stamped on the `BoardEvent::CardMoved` broadcast so the originator's own WS
+/// client can suppress the highlight flash for its own move (self-echo suppression).
+/// Security: T-6-03 — `client_id` is untrusted; worst case spoofing only affects
+/// highlight suppression, not authorization.
+///
 /// Note (WR-05): the server validates the fractional position string but does NOT
 /// validate that `new_position` is consistent with the target list's neighbor ordering.
 /// Intra-list ordering is intentionally client-trusted (by-design for fractional
@@ -245,9 +251,11 @@ pub async fn move_card(
     card_id: String,
     to_list_id: String,
     new_position: String,
+    client_id: String,
 ) -> Result<(), ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
+    use crate::models::events::BoardEvent;
 
     let state = expect_context::<AppState>();
 
@@ -261,10 +269,28 @@ pub async fn move_card(
             .map_err(|_| ServerFnError::new("invalid position"))?;
     }
 
+    // DB write
     move_card_inner(&state.write_pool.0, &board_id, &card_id, &to_list_id, &new_position)
         .await
         .map_err(|e| {
             tracing::error!("move_card_inner error: {e}");
             ServerFnError::new("Failed to move card")
-        })
+        })?;
+
+    // Publish CardMoved event after successful DB write (Pattern 2).
+    // next_seq increments the per-board AtomicU64 and returns the new value.
+    // D-05: stamp client_id so the originator's WASM client can suppress its own highlight.
+    let seq = state.board_rooms.next_seq(&board_id);
+    state.board_rooms.publish(
+        &board_id,
+        BoardEvent::CardMoved {
+            board_seq: seq,
+            client_id,
+            card_id,
+            to_list_id,
+            position: new_position,
+        },
+    );
+
+    Ok(())
 }

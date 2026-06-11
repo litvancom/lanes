@@ -7,6 +7,7 @@ pub mod routes;
 pub mod components;
 pub mod api;
 pub mod auth;
+pub mod state;
 
 #[cfg(feature = "ssr")]
 pub mod server;

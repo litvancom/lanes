@@ -75,6 +75,17 @@ pub struct BoardSignals {
     pub move_card_action: ServerAction<MoveCard>,
     /// Board ID (needed by KanbanList commit_drop to dispatch MoveCard)
     pub board_id: RwSignal<String>,
+    // ── Realtime (Phase 6) ──────────────────────────────────────────────────
+    /// The client_id assigned by the server in the Connected handshake.
+    /// Stored here so every mutation dispatch can include it (D-05/Flag 2).
+    /// None = WS not yet connected or reconnecting.
+    pub own_client_id: RwSignal<Option<String>>,
+    /// Last board_seq value received from the server.
+    /// Used for gap detection: if next event's board_seq > last_seen_seq + 1, trigger Refresh.
+    pub last_seen_seq: RwSignal<u64>,
+    /// Card currently highlighted due to a remote move (D-04/D-05).
+    /// None = no highlight active. Set by apply_board_event; cleared after ~1.5s.
+    pub highlight_card_id: RwSignal<Option<String>>,
 }
 
 /// Board view page component (`/board/:id`).
@@ -210,10 +221,29 @@ pub fn BoardPage() -> impl IntoView {
                                     labels_expanded: RwSignal::new(false),
                                     move_card_action,
                                     board_id: RwSignal::new(data.board.id.clone()),
+                                    // Phase 6 realtime fields
+                                    own_client_id: RwSignal::new(None),
+                                    last_seen_seq: RwSignal::new(data.board_seq),
+                                    highlight_card_id: RwSignal::new(None),
                                 };
 
                                 // Provide context for all child components
                                 provide_context(board_signals);
+
+                                // ── Realtime WS task (Phase 6) ──────────────────────────────
+                                // Spawn the WS client task on mount (WASM only).
+                                // on_cleanup drops the WsHandle which signals abort.
+                                {
+                                    use crate::state::ws_client::spawn_ws_task;
+                                    let ws_board_id = data.board.id.clone();
+                                    let ws_handle = StoredValue::new(
+                                        Some(spawn_ws_task(ws_board_id, board_signals))
+                                    );
+                                    on_cleanup(move || {
+                                        // Drop the WsHandle to signal abort
+                                        ws_handle.update_value(|h| { h.take(); });
+                                    });
+                                }
 
                                 // Still need StoredValue for lists (list mutations still use refetch)
                                 let lists_sv = StoredValue::new(lists.clone());

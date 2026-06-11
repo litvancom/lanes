@@ -589,12 +589,16 @@ fn commit_drop(
 
     // --- (d) Dispatch server fn ---
     let board_id = board_signals.board_id.get_untracked();
+    // D-05/Flag 2: include own_client_id so the server can stamp it on the CardMoved event.
+    // The originator's WS client will suppress the highlight flash for its own move.
+    let client_id = board_signals.own_client_id.get_untracked().unwrap_or_default();
     let action = board_signals.move_card_action;
     action.dispatch(MoveCard {
         board_id,
         card_id: card_id.clone(),
         to_list_id: to_list_id.clone(),
         new_position: new_position.clone(),
+        client_id,
     });
 
     // Capture the action version produced by THIS dispatch. `move_card_action` is a

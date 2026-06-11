@@ -5,11 +5,14 @@ use serde::{Deserialize, Serialize};
 /// Full board data returned to the board route (D-08).
 /// Contains the board metadata, all non-archived lists ordered by position,
 /// and all non-archived card stubs (title-bearing rows for Phase 3 rendering).
+/// `board_seq` is the current per-board sequence number at fetch time — the WASM client
+/// stores this as `last_seen_seq` to anchor gap detection before the first WS event arrives.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct BoardData {
     pub board: BoardWithMeta,
     pub lists: Vec<List>,
     pub cards: Vec<Card>,
+    pub board_seq: u64,
 }
 
 /// Internal: fetch a BoardData for a given (board_id, user_id) pair.
@@ -145,7 +148,9 @@ pub async fn get_board_inner(
         Card { id, list_id, board_id, card_num, title, position, cover, priority, due_at, done, archived, labels, checklist_done, checklist_total, comment_count, attachment_count, member_ids }
     }).collect();
 
-    Ok(BoardData { board, lists, cards })
+    // board_seq is set by the #[server] get_board wrapper (which has AppState access).
+    // get_board_inner is called from tests directly — board_seq defaults to 0 there.
+    Ok(BoardData { board, lists, cards, board_seq: 0 })
 }
 
 /// Internal: update board_members.last_viewed_at for a specific (board, user) pair.
@@ -177,6 +182,9 @@ pub async fn touch_last_viewed_inner(
 /// Fetch the full board data for the board route.
 /// Returns BoardData (board + lists + card stubs) for members only (BOARD-01, T-03-10).
 /// Read-only — never writes last_viewed_at (Pitfall 6); that's touch_last_viewed's job.
+///
+/// `board_seq` is read from the in-memory `BoardRoomRegistry` and stamped on the response
+/// so the WASM client can anchor `last_seen_seq` before the first WS event arrives.
 #[server]
 pub async fn get_board(board_id: String) -> Result<BoardData, ServerFnError> {
     use crate::auth::helpers::require_board_member;
@@ -187,13 +195,18 @@ pub async fn get_board(board_id: String) -> Result<BoardData, ServerFnError> {
     // Auth + membership gate first (T-03-10, D-12: generic "board not found" for non-members)
     let (user, _role) = require_board_member(&board_id, &state.read_pool.0).await?;
 
-    get_board_inner(&state.read_pool.0, &board_id, &user.id).await.map_err(|e| {
+    let mut data = get_board_inner(&state.read_pool.0, &board_id, &user.id).await.map_err(|e| {
         if matches!(e, sqlx::Error::RowNotFound) {
             return ServerFnError::new("board not found");
         }
         tracing::error!("get_board_inner error: {e}");
         ServerFnError::new("Failed to load board")
-    })
+    })?;
+
+    // Stamp the current board_seq so the client can anchor last_seen_seq (Flag 1 resolution).
+    data.board_seq = state.board_rooms.current_seq(&board_id);
+
+    Ok(data)
 }
 
 /// Update last_viewed_at for the current user on a board (D-01).
