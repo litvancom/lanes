@@ -49,7 +49,18 @@ fn date_string_to_millis(s: &str) -> Option<i64> {
     let y: i64 = parts[0].parse().ok()?;
     let m: i64 = parts[1].parse().ok()?;
     let d: i64 = parts[2].parse().ok()?;
-    if m < 1 || m > 12 || d < 1 || d > 31 { return None; }
+    if m < 1 || m > 12 || d < 1 { return None; }
+    // Reject impossible day-for-month (WR-06): e.g. 2025-02-31, 2025-04-31.
+    // The value is stored verbatim by set_due_date, so validate here rather than
+    // letting days_from_civil silently normalize a wrong date.
+    let is_leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+    let days_in_month = match m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => if is_leap { 29 } else { 28 },
+        _ => return None,
+    };
+    if d > days_in_month { return None; }
     // Days since epoch: https://howardhinnant.github.io/date_algorithms.html#days_from_civil
     let m2 = m;
     let y2 = if m2 <= 2 { y - 1 } else { y };
