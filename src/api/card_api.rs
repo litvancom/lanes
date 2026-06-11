@@ -55,13 +55,18 @@ pub async fn create_card_inner(
     let id = Uuid::now_v7().to_string();
     let now = now_millis().map_err(|_| sqlx::Error::Decode("clock error".into()))?;
 
+    // The card_num allocation (UPDATE boards) and the card INSERT must be atomic.
+    // Outside a transaction, an INSERT failure would leave next_card_num already
+    // advanced, permanently leaking a card number in the per-board sequence (WR-02).
+    let mut tx = pool.begin().await?;
+
     // Allocate card_num atomically: read next_card_num, increment it, return the allocated value
     // The UPDATE returns the new value; the card uses the pre-increment value (next_card_num before increment)
     let card_num: i64 = sqlx::query_scalar(
         "UPDATE boards SET next_card_num = next_card_num + 1 WHERE id = ? RETURNING next_card_num - 1"
     )
     .bind(board_id)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await?;
 
     sqlx::query(
@@ -78,8 +83,10 @@ pub async fn create_card_inner(
     .bind(position)
     .bind(now)
     .bind(now)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+
+    tx.commit().await?;
 
     Ok(Card {
         id,
