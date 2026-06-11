@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub mod events;
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Board {
     pub id: String,
