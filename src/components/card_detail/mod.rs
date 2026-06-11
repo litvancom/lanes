@@ -143,6 +143,10 @@ pub fn CardDetailModal(
     // Board signals context (for per-card RwSignal<Card> write-through on title save)
     let board_signals: Option<BoardSignals> = use_context::<BoardSignals>();
 
+    // Snapshot of the title prior to an optimistic save, for revert-on-error (WR-02).
+    let title_snapshot: RwSignal<Option<String>> = RwSignal::new(None);
+    let title_error: RwSignal<Option<String>> = RwSignal::new(None);
+
     let _ = card_num; // used in footer via detail_data
 
     view! {
@@ -155,7 +159,9 @@ pub fn CardDetailModal(
                     Err(_) => view! { <Redirect path="/"/> }.into_any(),
                     Ok(data) => {
                         let card = StoredValue::new(data.card.clone());
-                        let description_html = StoredValue::new(data.description_html.clone());
+                        // Reactive so a description Save can update it in place from the
+                        // server-rendered HTML, avoiding a racy full refetch (WR-09).
+                        let description_html = RwSignal::new(data.description_html.clone());
                         // Modal-scoped reactive watcher signals (mutated by WatchCard action via SidebarColumn)
                         let watcher_count = RwSignal::new(data.watcher_count);
                         let is_watching = RwSignal::new(data.is_watching);
@@ -201,6 +207,53 @@ pub fn CardDetailModal(
                         let card_id_sv = StoredValue::new(card_id.clone());
                         let initial_title_sv = StoredValue::new(initial_title.clone());
                         let cover_style_sv = StoredValue::new(cover_style);
+
+                        // Revert the optimistic title write if update_card_title fails (WR-02).
+                        {
+                            let bs = board_signals;
+                            let key = card_id.clone();
+                            Effect::new(move |_| {
+                                if let Some(result) = update_title_action.value().get() {
+                                    match result {
+                                        Ok(_) => {
+                                            title_snapshot.set(None);
+                                            title_error.set(None);
+                                        }
+                                        Err(_) => {
+                                            if let (Some(bs), Some(prev)) = (bs, title_snapshot.get_untracked()) {
+                                                bs.card_signals.with(|cs| {
+                                                    if let Some(sig) = cs.get(&key) {
+                                                        sig.update(|c| c.title = prev.clone());
+                                                    }
+                                                });
+                                                title_input.set(prev);
+                                            }
+                                            title_snapshot.set(None);
+                                            title_error.set(Some("Couldn't save changes. Try again.".to_string()));
+                                        }
+                                    }
+                                }
+                            });
+                        }
+
+                        // Inline error for description Save failures (WR-02 / WR-09).
+                        let desc_error: RwSignal<Option<String>> = RwSignal::new(None);
+
+                        // On description Save: update description_html in place from the returned
+                        // sanitized HTML, avoiding a racy refetch (WR-09); surface error on failure.
+                        Effect::new(move |_| {
+                            if let Some(result) = update_desc_action.value().get() {
+                                match result {
+                                    Ok(html) => {
+                                        description_html.set(html);
+                                        desc_error.set(None);
+                                    }
+                                    Err(_) => {
+                                        desc_error.set(Some("Couldn't save changes. Try again.".to_string()));
+                                    }
+                                }
+                            }
+                        });
 
                         view! {
                             <Modal show=show>
@@ -282,11 +335,13 @@ pub fn CardDetailModal(
                                                                         title_input.set(saved);
                                                                         editing_title.set(false);
                                                                     } else {
-                                                                        // Optimistic write-through to per-card signal (D-15)
+                                                                        // Optimistic write-through to per-card signal (D-15),
+                                                                        // snapshotting prior title for revert-on-error (WR-02)
                                                                         if let Some(bs) = board_signals {
                                                                             let tv = t.trim().to_string();
                                                                             bs.card_signals.with(|cs| {
                                                                                 if let Some(sig) = cs.get(&cid) {
+                                                                                    title_snapshot.set(Some(sig.get().title.clone()));
                                                                                     sig.update(|c| c.title = tv.clone());
                                                                                 }
                                                                             });
@@ -321,6 +376,7 @@ pub fn CardDetailModal(
                                                                     let tv = t.trim().to_string();
                                                                     bs.card_signals.with(|cs| {
                                                                         if let Some(sig) = cs.get(&cid) {
+                                                                            title_snapshot.set(Some(sig.get().title.clone()));
                                                                             sig.update(|c| c.title = tv.clone());
                                                                         }
                                                                     });
@@ -337,6 +393,11 @@ pub fn CardDetailModal(
                                                     autofocus
                                                 />
                                             </Show>
+                                            {move || title_error.get().map(|msg| view! {
+                                                <div style="font-size: 11px; color: var(--danger, #c0392b); margin-top: 2px">
+                                                    {msg}
+                                                </div>
+                                            })}
 
                                             // Member avatar stack + created-at
                                             <div style="display: flex; align-items: center; gap: 6px; margin-top: 4px">
@@ -424,7 +485,7 @@ pub fn CardDetailModal(
                                             <Show
                                                 when=move || editing_desc.get()
                                                 fallback=move || {
-                                                    let html = description_html.get_value();
+                                                    let html = description_html.get();
                                                     if html.is_empty() {
                                                         view! {
                                                             <div
@@ -471,13 +532,14 @@ pub fn CardDetailModal(
                                                             <button
                                                                 class="lns-btn lns-btn--primary lns-btn--sm"
                                                                 on:click=move |_| {
+                                                                    // Dispatch and let the success effect update
+                                                                    // description_html from the returned sanitized HTML
+                                                                    // (WR-09) — no racy refetch.
                                                                     update_desc_action.dispatch(UpdateCardDescription {
                                                                         board_id: board_id_sv.get_value(),
                                                                         card_id: card_id_sv.get_value(),
                                                                         description: desc_input.get_untracked(),
                                                                     });
-                                                                    // Refetch to get re-rendered sanitized HTML
-                                                                    detail_data.refetch();
                                                                     editing_desc.set(false);
                                                                     desc_changed.set(false);
                                                                 }
@@ -497,6 +559,11 @@ pub fn CardDetailModal(
                                                     </Show>
                                                 </div>
                                             </Show>
+                                            {move || desc_error.get().map(|msg| view! {
+                                                <div style="margin-top: 6px; font-size: 11px; color: var(--danger, #c0392b)">
+                                                    {msg}
+                                                </div>
+                                            })}
                                         </div>
 
                                         // ── Checklist section ──────────────────────────────

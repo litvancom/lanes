@@ -962,12 +962,16 @@ pub async fn update_card_title(
 /// Update a card's description (stores raw markdown; render_markdown is applied on read).
 ///
 /// Auth-guarded. IDOR scope: UPDATE WHERE id = ? AND board_id = ? (T-05-04).
+///
+/// Returns the freshly re-rendered, sanitized description HTML so the client can update
+/// the modal in place without a full refetch (WR-09) — which otherwise raced the
+/// separate read pool and could momentarily show the old description.
 #[server]
 pub async fn update_card_description(
     board_id: String,
     card_id: String,
     description: String,
-) -> Result<(), ServerFnError> {
+) -> Result<String, ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
 
@@ -975,12 +979,14 @@ pub async fn update_card_description(
 
     require_board_member(&board_id, &state.read_pool.0).await?;
 
-    update_card_description_inner(&state.write_pool.0, &board_id, &card_id, description)
+    update_card_description_inner(&state.write_pool.0, &board_id, &card_id, description.clone())
         .await
         .map_err(|e| {
             tracing::error!("update_card_description error: {e}");
             ServerFnError::new("Couldn't save changes. Try again.")
-        })
+        })?;
+
+    Ok(render_markdown(&description))
 }
 
 // ---------------------------------------------------------------------------
