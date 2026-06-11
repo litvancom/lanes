@@ -21,18 +21,8 @@ use crate::components::icon::Icon;
 // ---------------------------------------------------------------------------
 
 fn millis_to_date_string(ms: i64) -> String {
-    // epoch millis → seconds
-    let secs = ms / 1000;
-    // simple manual conversion: days since epoch
-    let days = secs / 86400;
-    // Using a simple algorithm for display (not a full calendar library)
-    // This is adequate for v1 — input type=date parses YYYY-MM-DD
-    let year_approx = 1970 + (days / 365);
-    // For SSR simplicity, return a rough format; the input type=date parses it
-    // If we can compute the real date, do so; else fall back to empty string
-    // We'll do a basic Gregorian calculation:
+    let days = (ms / 1000) / 86400;
     let (y, m, d) = epoch_days_to_ymd(days);
-    let _ = year_approx;
     format!("{:04}-{:02}-{:02}", y, m, d)
 }
 
