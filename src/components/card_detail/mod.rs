@@ -14,13 +14,18 @@
 //! Close: backdrop click, × button, or Escape → `use_navigate()` replace to /board/{id}.
 //! Width override: 760px via `.lns-card-modal` class (does not touch Phase-3 `.lns-modal-content`).
 
+pub mod checklist;
+pub mod pickers;
+
 use leptos::prelude::*;
 use leptos_router::components::Redirect;
-use crate::models::CardDetail;
+use crate::models::{CardDetail, ChecklistItem};
 use crate::routes::board::BoardSignals;
 use crate::api::card_detail_api::{UpdateCardTitle, UpdateCardDescription};
 use crate::components::modal::Modal;
 use crate::components::icon::Icon;
+use crate::components::card_detail::checklist::ChecklistSection;
+use crate::components::card_detail::pickers::{LabelPicker, DatePicker, PriorityPicker, MemberPicker};
 
 /// Validate a CSS color string for safe interpolation into inline styles.
 /// Mirrors `safe_cover_color` from kanban_card.rs.
@@ -94,7 +99,7 @@ pub fn CardDetailModal(
     board_id: String,
     card_num: i64,
 ) -> impl IntoView {
-    let board_id = StoredValue::new(board_id);
+    let board_id_sv = StoredValue::new(board_id);
 
     // Show signal drives the Modal shell; flipping to false triggers navigate-back
     let show = RwSignal::new(true);
@@ -104,7 +109,7 @@ pub fn CardDetailModal(
         let current = show.get();
         if let Some(true) = prev {
             if !current {
-                let path = format!("/board/{}", board_id.get_value());
+                let path = format!("/board/{}", board_id_sv.get_value());
                 #[cfg(target_arch = "wasm32")]
                 {
                     use leptos_router::hooks::use_navigate;
@@ -149,8 +154,17 @@ pub fn CardDetailModal(
                         let watcher_count = data.watcher_count;
                         let is_watching = data.is_watching;
                         let board_members = StoredValue::new(data.board_members.clone());
+                        let board_labels = StoredValue::new(data.board_labels.clone());
 
-                        let _ = board_members;
+                        // Modal-scoped checklist_items signal (seeded from CardDetail)
+                        let checklist_items: RwSignal<Vec<ChecklistItem>> =
+                            RwSignal::new(data.checklist_items.clone());
+
+                        // Picker visibility signals (one per picker)
+                        let show_member_picker = RwSignal::new(false);
+                        let show_label_picker = RwSignal::new(false);
+                        let show_date_picker = RwSignal::new(false);
+                        let show_priority_picker = RwSignal::new(false);
 
                         let cover_style = card.with_value(|c| {
                             c.cover.as_deref()
@@ -236,7 +250,7 @@ pub fn CardDetailModal(
                                                     on:input=move |ev| title_input.set(event_target_value(&ev))
                                                     on:keydown={
                                                         let cid = card_id_sv.get_value();
-                                                        let bid = board_id.get_value();
+                                                        let bid = board_id_sv.get_value();
                                                         move |ev: leptos::ev::KeyboardEvent| {
                                                             let saved = initial_title_sv.get_value();
                                                             match ev.key().as_str() {
@@ -273,7 +287,7 @@ pub fn CardDetailModal(
                                                     }
                                                     on:blur={
                                                         let cid = card_id_sv.get_value();
-                                                        let bid = board_id.get_value();
+                                                        let bid = board_id_sv.get_value();
                                                         move |_| {
                                                             let saved = initial_title_sv.get_value();
                                                             let t = title_input.get_untracked();
@@ -436,7 +450,7 @@ pub fn CardDetailModal(
                                                                 class="lns-btn lns-btn--primary lns-btn--sm"
                                                                 on:click=move |_| {
                                                                     update_desc_action.dispatch(UpdateCardDescription {
-                                                                        board_id: board_id.get_value(),
+                                                                        board_id: board_id_sv.get_value(),
                                                                         card_id: card_id_sv.get_value(),
                                                                         description: desc_input.get_untracked(),
                                                                     });
@@ -463,8 +477,14 @@ pub fn CardDetailModal(
                                             </Show>
                                         </div>
 
-                                        // ── Checklist section (placeholder for Plan 03) ──────
+                                        // ── Checklist section ──────────────────────────────
                                         <div class="lns-modal-section" id="card-detail-checklist-section">
+                                            <ChecklistSection
+                                                board_id=board_id_sv.get_value()
+                                                card_id=card_id.clone()
+                                                checklist_items=checklist_items
+                                                card_signal_key=card_id.clone()
+                                            />
                                         </div>
 
                                         // ── Activity section (placeholder for Plan 04) ───────
@@ -483,12 +503,75 @@ pub fn CardDetailModal(
                                             <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.04em; text-transform: uppercase; margin: 0 2px 2px">
                                                 "Add to card"
                                             </div>
-                                            <button class="lns-btn"><Icon name="users"/>" Members"</button>
-                                            <button class="lns-btn"><Icon name="tag"/>" Labels"</button>
+                                            // Members button + picker
+                                            <div style="position: relative">
+                                                <button
+                                                    class="lns-btn"
+                                                    on:click=move |_| show_member_picker.update(|v| *v = !*v)
+                                                >
+                                                    <Icon name="users"/>
+                                                    " Members"
+                                                </button>
+                                                <MemberPicker
+                                                    board_id=board_id_sv.get_value()
+                                                    card_id=card_id.clone()
+                                                    board_members=board_members.get_value()
+                                                    card_signal_key=card_id.clone()
+                                                    show=show_member_picker
+                                                />
+                                            </div>
+                                            // Labels button + picker
+                                            <div style="position: relative">
+                                                <button
+                                                    class="lns-btn"
+                                                    on:click=move |_| show_label_picker.update(|v| *v = !*v)
+                                                >
+                                                    <Icon name="tag"/>
+                                                    " Labels"
+                                                </button>
+                                                <LabelPicker
+                                                    board_id=board_id_sv.get_value()
+                                                    card_id=card_id.clone()
+                                                    board_labels=board_labels.get_value()
+                                                    card_signal_key=card_id.clone()
+                                                    show=show_label_picker
+                                                />
+                                            </div>
+                                            // Checklist button (scrolls to section)
                                             <button class="lns-btn"><Icon name="check"/>" Checklist"</button>
-                                            <button class="lns-btn"><Icon name="calendar"/>" Dates"</button>
+                                            // Dates button + picker
+                                            <div style="position: relative">
+                                                <button
+                                                    class="lns-btn"
+                                                    on:click=move |_| show_date_picker.update(|v| *v = !*v)
+                                                >
+                                                    <Icon name="calendar"/>
+                                                    " Dates"
+                                                </button>
+                                                <DatePicker
+                                                    board_id=board_id_sv.get_value()
+                                                    card_id=card_id.clone()
+                                                    card_signal_key=card_id.clone()
+                                                    show=show_date_picker
+                                                />
+                                            </div>
                                             <button class="lns-btn"><Icon name="paperclip"/>" Attachment"</button>
-                                            <button class="lns-btn"><Icon name="flag"/>" Priority"</button>
+                                            // Priority button + picker
+                                            <div style="position: relative">
+                                                <button
+                                                    class="lns-btn"
+                                                    on:click=move |_| show_priority_picker.update(|v| *v = !*v)
+                                                >
+                                                    <Icon name="flag"/>
+                                                    " Priority"
+                                                </button>
+                                                <PriorityPicker
+                                                    board_id=board_id_sv.get_value()
+                                                    card_id=card_id.clone()
+                                                    card_signal_key=card_id.clone()
+                                                    show=show_priority_picker
+                                                />
+                                            </div>
                                         </div>
 
                                         // Actions group

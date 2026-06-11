@@ -166,4 +166,6 @@ pub struct CardDetail {
     pub is_watching: bool,
     /// All board members (for member picker and author resolution).
     pub board_members: Vec<UserSummary>,
+    /// All labels on this board (for label picker — includes unassigned labels).
+    pub board_labels: Vec<CardLabel>,
 }

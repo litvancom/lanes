@@ -256,6 +256,21 @@ pub async fn get_card_detail_inner(
         .collect();
 
     // -----------------------------------------------------------------------
+    // 8b. Fetch all board labels (for label picker — includes unassigned labels)
+    // -----------------------------------------------------------------------
+    let board_labels_raw: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT id, name, color FROM labels WHERE board_id = ? ORDER BY name ASC",
+    )
+    .bind(board_id)
+    .fetch_all(pool)
+    .await?;
+
+    let board_labels: Vec<crate::models::CardLabel> = board_labels_raw
+        .into_iter()
+        .map(|(id, name, color)| crate::models::CardLabel { id, name, color })
+        .collect();
+
+    // -----------------------------------------------------------------------
     // 9. Render description through markdown sanitize pipeline (T-05-02)
     // -----------------------------------------------------------------------
     let description_html = render_markdown(description.as_deref().unwrap_or(""));
@@ -292,6 +307,7 @@ pub async fn get_card_detail_inner(
         watcher_count,
         is_watching,
         board_members,
+        board_labels,
     })
 }
 

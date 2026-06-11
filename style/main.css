@@ -2692,6 +2692,18 @@ input, textarea {
   color: var(--text-muted);
 }
 
+/* ---- Picker popovers (Label / Date / Priority / Member) ---- */
+/* Absolute-positioned over the sidebar button; stacks above modal content */
+.lns-picker-popover {
+  /* Sizing and spacing controlled via inline styles per picker;
+     shadow and border come from design tokens */
+  min-width: 160px;
+}
+
+.lns-picker-popover button:hover {
+  background: var(--bg-subtle) !important;
+}
+
 /* ---- Card modal: override .lns-modal-content for 760px width ---- */
 /* Applied via class on a wrapper or via specificity — the modal content containing
    a .lns-modal-cover child should be 760px wide per D-03 */
