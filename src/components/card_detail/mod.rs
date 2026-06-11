@@ -18,6 +18,7 @@ pub mod activity;
 pub mod attachments;
 pub mod checklist;
 pub mod pickers;
+pub mod sidebar;
 
 use leptos::prelude::*;
 use leptos_router::components::Redirect;
@@ -29,7 +30,7 @@ use crate::components::icon::Icon;
 use crate::components::card_detail::activity::ActivitySection;
 use crate::components::card_detail::attachments::AttachmentsSection;
 use crate::components::card_detail::checklist::ChecklistSection;
-use crate::components::card_detail::pickers::{LabelPicker, DatePicker, PriorityPicker, MemberPicker};
+use crate::components::card_detail::sidebar::SidebarColumn;
 
 /// Validate a CSS color string for safe interpolation into inline styles.
 /// Mirrors `safe_cover_color` from kanban_card.rs.
@@ -155,8 +156,9 @@ pub fn CardDetailModal(
                     Ok(data) => {
                         let card = StoredValue::new(data.card.clone());
                         let description_html = StoredValue::new(data.description_html.clone());
-                        let watcher_count = data.watcher_count;
-                        let is_watching = data.is_watching;
+                        // Modal-scoped reactive watcher signals (mutated by WatchCard action via SidebarColumn)
+                        let watcher_count = RwSignal::new(data.watcher_count);
+                        let is_watching = RwSignal::new(data.is_watching);
                         let board_members = StoredValue::new(data.board_members.clone());
                         let board_labels = StoredValue::new(data.board_labels.clone());
 
@@ -519,129 +521,21 @@ pub fn CardDetailModal(
                                         </div>
                                     </div>
 
-                                    // ── Sidebar ──────────────────────────────────────────────
-                                    <div class="lns-modal-sidebar">
-                                        // Add to card group
-                                        <div class="group">
-                                            <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.04em; text-transform: uppercase; margin: 0 2px 2px">
-                                                "Add to card"
-                                            </div>
-                                            // Members button + picker
-                                            <div style="position: relative">
-                                                <button
-                                                    class="lns-btn"
-                                                    on:click=move |_| show_member_picker.update(|v| *v = !*v)
-                                                >
-                                                    <Icon name="users"/>
-                                                    " Members"
-                                                </button>
-                                                <MemberPicker
-                                                    board_id=board_id_sv.get_value()
-                                                    card_id=card_id.clone()
-                                                    board_members=board_members.get_value()
-                                                    card_signal_key=card_id.clone()
-                                                    show=show_member_picker
-                                                />
-                                            </div>
-                                            // Labels button + picker
-                                            <div style="position: relative">
-                                                <button
-                                                    class="lns-btn"
-                                                    on:click=move |_| show_label_picker.update(|v| *v = !*v)
-                                                >
-                                                    <Icon name="tag"/>
-                                                    " Labels"
-                                                </button>
-                                                <LabelPicker
-                                                    board_id=board_id_sv.get_value()
-                                                    card_id=card_id.clone()
-                                                    board_labels=board_labels.get_value()
-                                                    card_signal_key=card_id.clone()
-                                                    show=show_label_picker
-                                                />
-                                            </div>
-                                            // Checklist button (scrolls to section)
-                                            <button class="lns-btn"><Icon name="check"/>" Checklist"</button>
-                                            // Dates button + picker
-                                            <div style="position: relative">
-                                                <button
-                                                    class="lns-btn"
-                                                    on:click=move |_| show_date_picker.update(|v| *v = !*v)
-                                                >
-                                                    <Icon name="calendar"/>
-                                                    " Dates"
-                                                </button>
-                                                <DatePicker
-                                                    board_id=board_id_sv.get_value()
-                                                    card_id=card_id.clone()
-                                                    card_signal_key=card_id.clone()
-                                                    show=show_date_picker
-                                                />
-                                            </div>
-                                            // Attachment button — triggers the hidden file input (DETAIL-08)
-                                            <button
-                                                class="lns-btn"
-                                                on:click=move |_| {
-                                                    #[cfg(target_arch = "wasm32")]
-                                                    {
-                                                        use wasm_bindgen::JsCast;
-                                                        if let Some(window) = leptos::web_sys::window() {
-                                                            if let Some(doc) = window.document() {
-                                                                if let Some(el) = doc.get_element_by_id("card-attachment-input") {
-                                                                    if let Ok(input) = el.dyn_into::<leptos::web_sys::HtmlElement>() {
-                                                                        let _ = input.click();
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            >
-                                                <Icon name="paperclip"/>
-                                                " Attachment"
-                                            </button>
-                                            // Priority button + picker
-                                            <div style="position: relative">
-                                                <button
-                                                    class="lns-btn"
-                                                    on:click=move |_| show_priority_picker.update(|v| *v = !*v)
-                                                >
-                                                    <Icon name="flag"/>
-                                                    " Priority"
-                                                </button>
-                                                <PriorityPicker
-                                                    board_id=board_id_sv.get_value()
-                                                    card_id=card_id.clone()
-                                                    card_signal_key=card_id.clone()
-                                                    show=show_priority_picker
-                                                />
-                                            </div>
-                                        </div>
-
-                                        // Actions group
-                                        <div class="group">
-                                            <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.04em; text-transform: uppercase; margin: 0 2px 2px">
-                                                "Actions"
-                                            </div>
-                                            <button class="lns-btn"><Icon name="moveTo"/>" Move"</button>
-                                            <button class="lns-btn"><Icon name="eye"/>" Watch"</button>
-                                            <button class="lns-btn"><Icon name="archive"/>" Archive"</button>
-                                        </div>
-
-                                        // Footer: #LANES-Cnn + watcher count
-                                        <div style="font-size: 11px; color: var(--text-faint); padding: 0 2px">
-                                            <div class="lns-mono">
-                                                {format!("#LANES-C{}", cn)}
-                                            </div>
-                                            <div style="margin-top: 2px">
-                                                {if is_watching {
-                                                    format!("Watching · {} watchers", watcher_count)
-                                                } else {
-                                                    format!("Watch · {} watchers", watcher_count)
-                                                }}
-                                            </div>
-                                        </div>
-                                    </div>
+                                    // ── Sidebar (SidebarColumn: Add-to-card + Actions + footer) ──
+                                    <SidebarColumn
+                                        board_id=board_id_sv.get_value()
+                                        card_id=card_id.clone()
+                                        card_num=cn
+                                        list_id=card.with_value(|c| c.list_id.clone())
+                                        board_members=board_members.get_value()
+                                        board_labels=board_labels.get_value()
+                                        watcher_count=watcher_count
+                                        is_watching=is_watching
+                                        show_member_picker=show_member_picker
+                                        show_label_picker=show_label_picker
+                                        show_date_picker=show_date_picker
+                                        show_priority_picker=show_priority_picker
+                                    />
                                 </div>
                             </Modal>
                         }.into_any()

@@ -2770,3 +2770,74 @@ input, textarea {
   overflow: hidden;
   padding: 0;
 }
+
+/* ---- Actions group: Move popover ---- */
+.lns-action-popover {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  z-index: 100;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  padding: 10px;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lns-action-popover-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.lns-action-popover-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.lns-action-popover-input {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+}
+
+.lns-action-popover-input:focus {
+  border-color: var(--accent);
+}
+
+/* Cross-board data-loss warning (Copywriting Contract, D-05) */
+.lns-action-warning {
+  font-size: 11px;
+  color: var(--warning, oklch(75% 0.14 60));
+  background: oklch(96% 0.02 60);
+  border: 1px solid oklch(88% 0.06 60);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+}
+
+/* ---- Actions group: Archive inline confirmation ---- */
+.lns-archive-confirm {
+  margin-top: 4px;
+  padding: 8px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+/* Archive confirm button: primary style with danger (red) text override */
+.lns-btn--archive-confirm {
+  color: var(--danger, oklch(55% 0.20 25)) !important;
+}

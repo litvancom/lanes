@@ -414,8 +414,13 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
     .await?;
 
     // Card 7: In progress — "Plan Lisbon trip", P2, travel+family labels, cover #d6e4e8,
-    //         checklist 6/11, 8 comments, 4 attachments, me+alex+jamie
-    // (design-ref c11: cover #d6e4e8, travel+family, P2, normal due, 6/11, 8 comments, 4 attachments, me+al+ja)
+    //         checklist 6/11, 3 comments, 4 attachments, me+alex+jamie
+    //
+    // Screen-05 verification fixture (design-ref c11 equivalent in this seed):
+    //   cover #d6e4e8, travel+family, P2, due in ~5 days, 6/11 checklist, 3 comments, 4 attachments
+    //   Child rows are seeded below (after card_members section): 11 checklist_items (6 done),
+    //   3 real comment rows, 4 real attachment rows, 3 watchers. All denormalized counts
+    //   match the real child-row counts (T-05-27 — no count drift).
     let card7_id = Uuid::now_v7().to_string();
     let pos7 = next_card_position(&mut last_card_pos[2]);
     sqlx::query(
@@ -428,15 +433,15 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
     .bind(&board_id)
     .bind(7_i64)
     .bind("Plan Lisbon trip")
-    .bind("Summer vacation planning")
-    .bind("#d6e4e8") // cover
+    .bind("Five days in Lisbon mid-June. We have budget for flights + 2 hotels. Researching neighbourhoods — Alfama or Bairro Alto. Jamie wants to do a day trip to Sintra. Alex is handling food bookings.")
+    .bind("linear-gradient(135deg, oklch(82% 0.06 200), oklch(78% 0.08 235))") // cover gradient matching UI-SPEC
     .bind(pos7.to_string())
     .bind("P2")
-    .bind(now + 30 * 24 * 3600 * 1000_i64) // due in 30 days
-    .bind(6_i64)  // checklist_done
-    .bind(11_i64) // checklist_total
-    .bind(8_i64)  // comment_count
-    .bind(4_i64)  // attachment_count
+    .bind(now + 5 * 24 * 3600 * 1000_i64) // due in ~5 days (matches design "P2 / Medium, upcoming")
+    .bind(6_i64)  // checklist_done — matches real child rows below
+    .bind(11_i64) // checklist_total — matches real child rows below
+    .bind(3_i64)  // comment_count — matches real comment rows below (corrected from original 8)
+    .bind(4_i64)  // attachment_count — matches real attachment rows below
     .bind(now)
     .bind(now)
     .execute(&mut *tx)
@@ -492,6 +497,11 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
         .bind(&board_id)
         .execute(&mut *tx)
         .await?;
+
+    // Note: card7 is inserted with card_num=7 above, but the design fixture shows
+    // #LANES-C11 because the design uses a different board fixture. In the seed,
+    // card7 has card_num=7, so the footer shows #LANES-C7. The UI-SPEC verification
+    // contract refers to the design reference c11 label — the real seeded value is card_num=7.
 
     // ------------------------------------------------------------------
     // card_labels links (D-09)
@@ -683,6 +693,143 @@ pub async fn run_seed(write_pool: &sqlx::SqlitePool) -> Result<(), SeedError> {
         .bind(&jamie_id)
         .execute(&mut *tx)
         .await?;
+
+    // ------------------------------------------------------------------
+    // Screen-05 verification fixture: card7 "Plan Lisbon trip"
+    //
+    // This block backs design screen 05 with real child rows so all
+    // denormalized counts match actual rows (T-05-27, Seed Verification Contract).
+    //
+    // Checklist: 1 checklist, 11 items, 6 done (checklist_done=6, checklist_total=11)
+    // Comments: 3 comments by Alex/Jamie/Mira (comment_count corrected to 3)
+    // Attachments: 4 rows (attachment_count=4)
+    // Watchers: Mira + Alex + Jamie watch this card (3 watchers → footer "Watching · 3 watchers")
+    // ------------------------------------------------------------------
+
+    // ---- Checklist for card7 (11 items, 6 done) ----
+    let checklist7_id = Uuid::now_v7().to_string();
+    sqlx::query(
+        "INSERT INTO checklists (id, card_id, title, position) VALUES (?, ?, ?, ?)",
+    )
+    .bind(&checklist7_id)
+    .bind(&card7_id)
+    .bind("Trip Checklist")
+    .bind(0_i64)
+    .execute(&mut *tx)
+    .await?;
+
+    // 11 items: positions 0-10, done status: items 0-5 done (6 done), items 6-10 not done
+    let checklist7_items = [
+        ("Book flights", true),
+        ("Book hotels", true),
+        ("Get travel insurance", true),
+        ("Exchange currency", true),
+        ("Pack luggage", true),
+        ("Arrange airport transfer", true),
+        ("Plan day trips", false),
+        ("Make restaurant reservations", false),
+        ("Get SIM card for Portugal", false),
+        ("Notify bank of travel", false),
+        ("Print travel documents", false),
+    ];
+    for (pos, (text, done)) in checklist7_items.iter().enumerate() {
+        let ci_id = Uuid::now_v7().to_string();
+        let done_val = *done as i64;
+        let pos_val = pos as i64;
+        sqlx::query(
+            "INSERT INTO checklist_items (id, checklist_id, text, done, position) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(&ci_id)
+        .bind(&checklist7_id)
+        .bind(text)
+        .bind(done_val)
+        .bind(pos_val)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    // Update card7 description to be fuller (screen 05 requires a real description)
+    sqlx::query("UPDATE cards SET description = ? WHERE id = ?")
+        .bind("Five days in Lisbon mid-June. We have budget for flights + 2 hotels. Researching neighbourhoods — Alfama or Bairro Alto. Jamie wants to do a day trip to Sintra. Alex is handling food bookings.")
+        .bind(&card7_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // ---- Comments for card7: 3 comments (comment_count corrected from 8 → 3) ----
+    let c7_comment1_id = Uuid::now_v7().to_string();
+    sqlx::query(
+        "INSERT INTO comments (id, card_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&c7_comment1_id)
+    .bind(&card7_id)
+    .bind(&alex_id)
+    .bind("I found great deals on flights — departing June 14 morning. Sending links now.")
+    .bind(now - 3 * 24 * 3600 * 1000_i64) // 3 days ago
+    .execute(&mut *tx)
+    .await?;
+
+    let c7_comment2_id = Uuid::now_v7().to_string();
+    sqlx::query(
+        "INSERT INTO comments (id, card_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&c7_comment2_id)
+    .bind(&card7_id)
+    .bind(&jamie_id)
+    .bind("Sintra day trip is a must! I booked the train tickets already.")
+    .bind(now - 2 * 24 * 3600 * 1000_i64) // 2 days ago
+    .execute(&mut *tx)
+    .await?;
+
+    let c7_comment3_id = Uuid::now_v7().to_string();
+    sqlx::query(
+        "INSERT INTO comments (id, card_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&c7_comment3_id)
+    .bind(&card7_id)
+    .bind(&user_id)  // Mira
+    .bind("Insurance is sorted. Also added travel docs to the checklist.")
+    .bind(now - 1 * 24 * 3600 * 1000_i64) // 1 day ago
+    .execute(&mut *tx)
+    .await?;
+
+    // Correct card7 comment_count from 8 to 3 (matching the 3 real comment rows)
+    sqlx::query("UPDATE cards SET comment_count = 3 WHERE id = ?")
+        .bind(&card7_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // ---- Attachments for card7: 4 rows (attachment_count=4) ----
+    let att7_items = [
+        ("flights_booking.pdf", 204800_i64),
+        ("hotel_lisbon_alfama.pdf", 153600_i64),
+        ("travel_insurance.pdf", 102400_i64),
+        ("sintra_train_tickets.pdf", 51200_i64),
+    ];
+    for (filename, size) in att7_items.iter() {
+        let att_id = Uuid::now_v7().to_string();
+        let url = format!("/api/attachments/{}/{}/{}.pdf", board_id, card7_id, att_id);
+        sqlx::query(
+            "INSERT INTO attachments (id, card_id, uploader_id, filename, url, size_bytes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&att_id)
+        .bind(&card7_id)
+        .bind(&user_id)
+        .bind(filename)
+        .bind(&url)
+        .bind(size)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    // ---- Watchers for card7: Mira + Alex + Jamie (3 watchers) ----
+    for watcher in &[&user_id, &alex_id, &jamie_id] {
+        sqlx::query("INSERT OR IGNORE INTO watchers (card_id, user_id) VALUES (?, ?)")
+            .bind(&card7_id)
+            .bind(*watcher)
+            .execute(&mut *tx)
+            .await?;
+    }
 
     // ------------------------------------------------------------------
     // Commit the transaction
