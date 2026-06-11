@@ -55,6 +55,7 @@ hydrate = [
     "dep:wasm-bindgen",
     "dep:js-sys",
     "dep:fractional_index",
+    "dep:serde_json",
 ]
 ssr = [
     "leptos-use/ssr",

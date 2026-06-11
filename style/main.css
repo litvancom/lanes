@@ -2661,6 +2661,60 @@ input, textarea {
   font-size: 11px;
 }
 
+/* ── Attachment list ───────────────────────────────────── */
+.lns-attachment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.lns-attachment-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.lns-attachment-row svg,
+.lns-attachment-row .lns-icon {
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+
+.lns-attachment-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.lns-attachment-name {
+  color: var(--text);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lns-attachment-name:hover {
+  text-decoration: underline;
+  color: var(--accent);
+}
+
+.lns-attachment-size {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.lns-attachment-error {
+  font-size: 12px;
+  color: var(--red, #e63946);
+  margin-top: 4px;
+  padding: 0 2px;
+}
+
 /* Avatar MD size (28px) for activity and modal header */
 .lns-avatar--md {
   width: 28px;

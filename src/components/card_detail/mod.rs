@@ -15,17 +15,19 @@
 //! Width override: 760px via `.lns-card-modal` class (does not touch Phase-3 `.lns-modal-content`).
 
 pub mod activity;
+pub mod attachments;
 pub mod checklist;
 pub mod pickers;
 
 use leptos::prelude::*;
 use leptos_router::components::Redirect;
-use crate::models::{ActivityEntry, CardDetail, ChecklistItem};
+use crate::models::{ActivityEntry, Attachment, CardDetail, ChecklistItem};
 use crate::routes::board::BoardSignals;
 use crate::api::card_detail_api::{UpdateCardTitle, UpdateCardDescription};
 use crate::components::modal::Modal;
 use crate::components::icon::Icon;
 use crate::components::card_detail::activity::ActivitySection;
+use crate::components::card_detail::attachments::AttachmentsSection;
 use crate::components::card_detail::checklist::ChecklistSection;
 use crate::components::card_detail::pickers::{LabelPicker, DatePicker, PriorityPicker, MemberPicker};
 
@@ -165,6 +167,10 @@ pub fn CardDetailModal(
                         // Modal-scoped activity signal (seeded from CardDetail.activity)
                         let activity: RwSignal<Vec<ActivityEntry>> =
                             RwSignal::new(data.activity.clone());
+
+                        // Modal-scoped attachments signal (seeded from CardDetail.attachments)
+                        let attachments: RwSignal<Vec<Attachment>> =
+                            RwSignal::new(data.attachments.clone());
 
                         // Picker visibility signals (one per picker)
                         let show_member_picker = RwSignal::new(false);
@@ -493,6 +499,14 @@ pub fn CardDetailModal(
                                             />
                                         </div>
 
+                                        // ── Attachments section ───────────────────────────
+                                        <AttachmentsSection
+                                            board_id=board_id_sv.get_value()
+                                            card_id=card_id.clone()
+                                            attachments=attachments
+                                            card_signal_key=card_id.clone()
+                                        />
+
                                         // ── Activity section ──────────────────────────────
                                         <div class="lns-modal-section">
                                             <ActivitySection
@@ -564,7 +578,28 @@ pub fn CardDetailModal(
                                                     show=show_date_picker
                                                 />
                                             </div>
-                                            <button class="lns-btn"><Icon name="paperclip"/>" Attachment"</button>
+                                            // Attachment button — triggers the hidden file input (DETAIL-08)
+                                            <button
+                                                class="lns-btn"
+                                                on:click=move |_| {
+                                                    #[cfg(target_arch = "wasm32")]
+                                                    {
+                                                        use wasm_bindgen::JsCast;
+                                                        if let Some(window) = leptos::web_sys::window() {
+                                                            if let Some(doc) = window.document() {
+                                                                if let Some(el) = doc.get_element_by_id("card-attachment-input") {
+                                                                    if let Ok(input) = el.dyn_into::<leptos::web_sys::HtmlElement>() {
+                                                                        let _ = input.click();
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            >
+                                                <Icon name="paperclip"/>
+                                                " Attachment"
+                                            </button>
                                             // Priority button + picker
                                             <div style="position: relative">
                                                 <button
