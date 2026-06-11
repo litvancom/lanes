@@ -89,13 +89,18 @@ pub fn SidebarColumn(
 
     // ---- Watch action state ----
     let watch_action = ServerAction::<WatchCard>::new();
+    // Tracks the watch state that was actually requested by the in-flight dispatch
+    // (WR-01). On success we set is_watching to this authoritative value rather than
+    // blindly negating the current value, which desyncs on rapid clicks / in-flight
+    // toggles since the server returns only the watcher count.
+    let requested_watch = RwSignal::new(is_watching.get_untracked());
 
     // When watch action succeeds, update modal-scoped watcher signals
     Effect::new(move |_| {
         if let Some(Ok(new_count)) = watch_action.value().get() {
             watcher_count.set(new_count);
-            // Toggle is_watching based on whether we were watching before
-            is_watching.update(|v| *v = !*v);
+            // Set to the requested value, not a blind negation (WR-01)
+            is_watching.set(requested_watch.get_untracked());
         }
     });
 
@@ -350,10 +355,12 @@ pub fn SidebarColumn(
                         let bid = board_id_sv.get_value();
                         let cid = card_id_sv.get_value();
                         let currently_watching = is_watching.get_untracked();
+                        let want = !currently_watching;
+                        requested_watch.set(want);
                         watch_action.dispatch(WatchCard {
                             board_id: bid,
                             card_id: cid,
-                            watch: !currently_watching,
+                            watch: want,
                         });
                     }
                 >
