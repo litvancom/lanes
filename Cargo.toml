@@ -49,6 +49,8 @@ wasm-bindgen = { version = "0.2", optional = true }
 js-sys = { version = "0.3", optional = true }
 # wasm-bindgen-futures: await JS promises (attachment upload fetch) on wasm32.
 wasm-bindgen-futures = { version = "0.4", optional = true }
+# futures: oneshot channel used in WASM WS reconnect loop to bridge close callback to async.
+futures = { version = "0.3", default-features = false, features = ["std"], optional = true }
 
 [features]
 default = []
@@ -58,6 +60,7 @@ hydrate = [
     "dep:wasm-bindgen",
     "dep:js-sys",
     "dep:wasm-bindgen-futures",
+    "dep:futures",
     "dep:fractional_index",
     "dep:serde_json",
 ]

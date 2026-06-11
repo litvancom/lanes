@@ -1,7 +1,11 @@
-//! WASM WebSocket client task for per-board realtime sync (RT-01).
+//! WASM WebSocket client task for per-board realtime sync (RT-01/RT-02).
 //!
 //! `spawn_ws_task` opens a WebSocket connection to `/ws/board/:id`, receives
 //! `WsEnvelope` JSON messages, and patches the board's reactive signals in place.
+//!
+//! RT-02: The task wraps the connect in an exponential-backoff reconnect loop.
+//! On a sequence-number gap, it calls `refresh_board` to atomically swap in
+//! fresh board state without showing a spinner (stale-then-swap, D-03).
 //!
 //! The task is launched by `BoardPage` on mount and torn down when the component
 //! unmounts via `on_cleanup` dropping the `WsHandle` (D-06 teardown).
@@ -54,33 +58,113 @@ impl Drop for WsHandle {
 
 #[cfg(target_arch = "wasm32")]
 pub fn spawn_ws_task(board_id: String, signals: BoardSignals) -> WsHandle {
-    use wasm_bindgen::prelude::*;
-    use wasm_bindgen::JsCast;
-    use web_sys::{MessageEvent, WebSocket};
-    use leptos::leptos_dom::logging::console_log;
-
     let abort = Arc::new(AtomicBool::new(false));
     let handle = WsHandle::new(Arc::clone(&abort));
 
-    let ws_url = ws_url_for(&board_id);
+    let abort_task = Arc::clone(&abort);
+    wasm_bindgen_futures::spawn_local(async move {
+        reconnect_loop(board_id, signals, abort_task).await;
+    });
 
-    // Open the WebSocket — errors here (bad URL, no network) are logged; task will retry if needed.
-    let ws = match WebSocket::new(&ws_url) {
-        Ok(ws) => ws,
-        Err(e) => {
-            console_log(&format!("WS open error for board {board_id}: {e:?}"));
-            return handle;
+    handle
+}
+
+/// Exponential-backoff reconnect loop (D-01/D-02/RT-02).
+///
+/// - Initial backoff: 1000ms.
+/// - Doubles on each failure, capped at 30,000ms.
+/// - Jitter: ±25% of backoff (via js_sys::Math::random()).
+/// - On successful Connected handshake: reset backoff, clear reconnect_attempts.
+/// - Breaks when abort flag is set (navigate-away via WsHandle drop).
+#[cfg(target_arch = "wasm32")]
+async fn reconnect_loop(board_id: String, signals: BoardSignals, abort: Arc<AtomicBool>) {
+    use web_sys::WebSocket;
+    use leptos::leptos_dom::logging::console_log;
+
+    let mut backoff_ms: u64 = 1000;
+
+    loop {
+        if abort.load(Ordering::Relaxed) {
+            break;
         }
-    };
 
-    // Clone references for closures
-    let abort_onmessage = Arc::clone(&abort);
+        let ws_url = ws_url_for(&board_id);
+
+        // Attempt to open the WebSocket.
+        let ws = match WebSocket::new(&ws_url) {
+            Ok(ws) => ws,
+            Err(e) => {
+                console_log(&format!("[ws-client] board={board_id} open error: {e:?}"));
+                // Increment attempt counter so the toast can appear after 2+ failures.
+                signals.reconnect_attempts.update(|n| *n += 1);
+                signals.ws_connected.set(false);
+
+                // Backoff with ±25% jitter (D-02).
+                let jitter_fraction = js_sys::Math::random(); // 0.0..1.0
+                let jitter_offset = (backoff_ms as f64 * 0.25 * (jitter_fraction * 2.0 - 1.0)) as i64;
+                let sleep_ms = (backoff_ms as i64 + jitter_offset).max(100) as u32;
+                gloo_timers::future::TimeoutFuture::new(sleep_ms).await;
+                backoff_ms = (backoff_ms * 2).min(30_000);
+                continue;
+            }
+        };
+
+        // WebSocket opened — wire up event handlers and wait for close.
+        let closed = run_ws_session(&board_id, &ws, signals, Arc::clone(&abort)).await;
+
+        // Always clear connected state when session ends.
+        signals.ws_connected.set(false);
+
+        if abort.load(Ordering::Relaxed) {
+            // Clean close due to navigate-away — stop looping.
+            let _ = ws.close();
+            break;
+        }
+
+        if closed {
+            // Server closed the connection — increment attempt, backoff, retry.
+            signals.reconnect_attempts.update(|n| *n += 1);
+            let jitter_fraction = js_sys::Math::random();
+            let jitter_offset = (backoff_ms as f64 * 0.25 * (jitter_fraction * 2.0 - 1.0)) as i64;
+            let sleep_ms = (backoff_ms as i64 + jitter_offset).max(100) as u32;
+            gloo_timers::future::TimeoutFuture::new(sleep_ms).await;
+            backoff_ms = (backoff_ms * 2).min(30_000);
+        }
+    }
+}
+
+/// Run one WebSocket session: wire callbacks, await close, return true if we should retry.
+///
+/// Returns when the WebSocket closes (or the abort flag is set).
+/// On successful Connected handshake: resets backoff state in signals.
+#[cfg(target_arch = "wasm32")]
+async fn run_ws_session(
+    board_id: &str,
+    ws: &web_sys::WebSocket,
+    signals: BoardSignals,
+    abort: Arc<AtomicBool>,
+) -> bool {
+    use wasm_bindgen::prelude::*;
+    use wasm_bindgen::JsCast;
+    use web_sys::MessageEvent;
+    use leptos::leptos_dom::logging::console_log;
+
+    // Channel to signal the async loop that the socket closed.
+    // We use an Rc<RefCell<Option<Sender>>> shared between closures and this function.
+    use std::rc::Rc;
+    use std::cell::RefCell;
+
+    let (close_tx, close_rx) = futures::channel::oneshot::channel::<()>();
+    let close_tx = Rc::new(RefCell::new(Some(close_tx)));
+
+    let abort_msg = Arc::clone(&abort);
     let signals_msg = signals;
-    let board_id_msg = board_id.clone();
+    let board_id_msg = board_id.to_string();
 
-    // onmessage handler
+    // onmessage — apply board events; detect Connected to reset backoff
+    let board_id_str = board_id.to_string();
     let onmessage = Closure::<dyn FnMut(MessageEvent)>::new(move |e: MessageEvent| {
-        if abort_onmessage.load(Ordering::Relaxed) {
+        if abort_msg.load(Ordering::Relaxed) {
             return;
         }
         if let Some(text) = e.data().as_string() {
@@ -90,7 +174,17 @@ pub fn spawn_ws_task(board_id: String, signals: BoardSignals) -> WsHandle {
                         .own_client_id
                         .get_untracked()
                         .unwrap_or_default();
-                    apply_board_event(signals_msg, payload, &own_id);
+
+                    // On Connected: reset backoff counters (successful connection).
+                    if let BoardEvent::Connected { .. } = &payload {
+                        signals_msg.reconnect_attempts.set(0);
+                        signals_msg.ws_connected.set(true);
+                    }
+
+                    // Apply the event (includes seq-gap detection).
+                    wasm_bindgen_futures::spawn_local(async move {
+                        apply_board_event_async(signals_msg, payload, &own_id).await;
+                    });
                 }
                 Ok(WsEnvelope::User { .. }) => {
                     // 06-05: notification badge patching
@@ -100,41 +194,198 @@ pub fn spawn_ws_task(board_id: String, signals: BoardSignals) -> WsHandle {
                 }
                 Err(e) => {
                     console_log(&format!(
-                        "[ws-client] board={board_id_msg} deserialize error: {e}"
+                        "[ws-client] board={board_id_str} deserialize error: {e}"
                     ));
                 }
             }
         }
     });
     ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
-    onmessage.forget(); // keep closure alive
+    onmessage.forget();
 
-    // onerror handler (log only; reconnect is future work in 06-03)
-    let board_id_err = board_id.clone();
+    // onerror — log only; onclose will fire afterward to trigger the retry.
+    let board_id_err = board_id.to_string();
     let onerror = Closure::<dyn FnMut(web_sys::ErrorEvent)>::new(move |e: web_sys::ErrorEvent| {
         console_log(&format!("[ws-client] board={board_id_err} error: {:?}", e.message()));
     });
     ws.set_onerror(Some(onerror.as_ref().unchecked_ref()));
     onerror.forget();
 
-    // onclose handler (log; reconnect in 06-03)
-    let board_id_close = board_id.clone();
-    let abort_onclose = Arc::clone(&abort);
+    // onclose — signal the async loop that the session ended.
+    let close_tx_clone = Rc::clone(&close_tx);
+    let abort_close = Arc::clone(&abort);
+    let board_id_close = board_id.to_string();
     let onclose = Closure::<dyn FnMut(web_sys::CloseEvent)>::new(move |_: web_sys::CloseEvent| {
-        if !abort_onclose.load(Ordering::Relaxed) {
-            console_log(&format!("[ws-client] board={board_id_close} closed (reconnect in 06-03)"));
+        if !abort_close.load(Ordering::Relaxed) {
+            console_log(&format!("[ws-client] board={board_id_close} connection closed — will reconnect"));
+        }
+        // Fire the oneshot to wake the async loop.
+        if let Some(tx) = close_tx_clone.borrow_mut().take() {
+            let _ = tx.send(());
         }
     });
     ws.set_onclose(Some(onclose.as_ref().unchecked_ref()));
     onclose.forget();
 
-    // Store the WebSocket on the handle so we can close it on teardown.
-    // For now, abort flag is the primary teardown signal.
-    // The WsHandle::drop signals abort; the next onmessage will see it and stop processing.
-    // In 06-03, we will also call ws.close() from a stored reference.
-    let _ = ws; // ws is not stored; onerror/onclose handle lifecycle
+    // Await close (or abort).
+    let _ = close_rx.await;
 
-    handle
+    // Return true = should retry (abort=false means server closed us, not intentional teardown).
+    !abort.load(Ordering::Relaxed)
+}
+
+/// Async wrapper around event application — handles seq-gap detection and refresh.
+///
+/// Called from the onmessage closure via `spawn_local` so that `refresh_board` (async)
+/// can be awaited when a sequence gap is detected.
+#[cfg(target_arch = "wasm32")]
+async fn apply_board_event_async(signals: BoardSignals, event: BoardEvent, own_client_id: &str) {
+    // Seq-gap detection: compare event's board_seq to last_seen_seq.
+    // Rules (Flag 1):
+    //   seq == last+1          → normal: apply, advance last_seen_seq
+    //   seq <= last && last!=0 → duplicate/replay: discard (idempotent)
+    //   seq > last+1 && last!=0 → gap: refresh and discard stale delta
+    // Connected anchors last_seen_seq; Refresh triggers refresh_board.
+    let last = signals.last_seen_seq.get_untracked();
+
+    let seq_opt = board_seq_of(&event);
+
+    if let Some(seq) = seq_opt {
+        // Skip duplicate/replay events (idempotent guard).
+        if last != 0 && seq <= last {
+            return;
+        }
+        // Sequence gap: fetch fresh board state (stale-then-swap).
+        if last != 0 && seq > last + 1 {
+            let board_id = signals.board_id.get_untracked();
+            refresh_board(board_id, signals).await;
+            return; // discard stale delta — the refresh fetched everything
+        }
+    }
+
+    // Refresh event: fetch fresh board state unconditionally.
+    if matches!(event, BoardEvent::Refresh) {
+        let board_id = signals.board_id.get_untracked();
+        refresh_board(board_id, signals).await;
+        return;
+    }
+
+    // Normal path: apply the event.
+    apply_board_event(signals, event, own_client_id);
+}
+
+/// Extract the board_seq from any event that carries one.
+/// Returns None for events without a sequence number (Refresh).
+fn board_seq_of(event: &BoardEvent) -> Option<u64> {
+    match event {
+        BoardEvent::Connected { board_seq, .. } => Some(*board_seq),
+        BoardEvent::CardMoved { board_seq, .. } => Some(*board_seq),
+        BoardEvent::CardAdded { board_seq, .. } => Some(*board_seq),
+        BoardEvent::CardUpdated { board_seq, .. } => Some(*board_seq),
+        BoardEvent::CardArchived { board_seq, .. } => Some(*board_seq),
+        BoardEvent::CommentAdded { board_seq, .. } => Some(*board_seq),
+        BoardEvent::ChecklistUpdated { board_seq, .. } => Some(*board_seq),
+        BoardEvent::LabelChanged { board_seq, .. } => Some(*board_seq),
+        BoardEvent::PriorityChanged { board_seq, .. } => Some(*board_seq),
+        BoardEvent::DueDateChanged { board_seq, .. } => Some(*board_seq),
+        BoardEvent::MemberChanged { board_seq, .. } => Some(*board_seq),
+        BoardEvent::AttachmentAdded { board_seq, .. } => Some(*board_seq),
+        BoardEvent::AttachmentRemoved { board_seq, .. } => Some(*board_seq),
+        BoardEvent::CardMovedCrossBoard { board_seq, .. } => Some(*board_seq),
+        BoardEvent::ListAdded { board_seq, .. } => Some(*board_seq),
+        BoardEvent::ListRenamed { board_seq, .. } => Some(*board_seq),
+        BoardEvent::ListReordered { board_seq, .. } => Some(*board_seq),
+        BoardEvent::ListArchived { board_seq, .. } => Some(*board_seq),
+        BoardEvent::Refresh => None,
+    }
+}
+
+/// Stale-then-swap full board refresh (D-03, RT-02).
+///
+/// Calls `get_board` server function and patches all `BoardSignals` in place:
+/// - Updates existing `RwSignal<Card>` values (no wholesale map replacement).
+/// - Inserts signals for new cards.
+/// - Removes signals for cards no longer present.
+/// - Rebuilds `list_order` and `list_cards`.
+/// - Sets `last_seen_seq` to the fresh `board_seq`.
+///
+/// The stale board stays rendered until this completes — no skeleton or spinner.
+///
+/// CRITICAL (Anti-Pattern §720): never call `card_signals.set(...)` with a new HashMap;
+/// always `.update()` individual entries so Leptos `<For>` keeps existing DOM nodes.
+#[cfg(target_arch = "wasm32")]
+async fn refresh_board(board_id: String, signals: BoardSignals) {
+    use crate::api::board_api::get_board;
+    use leptos::leptos_dom::logging::console_log;
+
+    match get_board(board_id.clone()).await {
+        Ok(data) => {
+            // --- Patch card_signals in place (CRITICAL: do NOT replace the map) ---
+            let fresh_card_ids: std::collections::HashSet<String> =
+                data.cards.iter().map(|c| c.id.clone()).collect();
+
+            // Update existing signals and insert new ones.
+            for card in &data.cards {
+                let existing = signals.card_signals.with(|cs| cs.get(&card.id).copied());
+                if let Some(sig) = existing {
+                    // Update in place — keeps the DOM node alive.
+                    let card_clone = card.clone();
+                    sig.set(card_clone);
+                } else {
+                    // New card: insert a fresh signal.
+                    let new_sig = RwSignal::new(card.clone());
+                    signals.card_signals.update(|cs| {
+                        cs.insert(card.id.clone(), new_sig);
+                    });
+                }
+            }
+
+            // Remove signals for cards no longer in the fresh data.
+            let stale_ids: Vec<String> = signals.card_signals.with(|cs| {
+                cs.keys()
+                    .filter(|id| !fresh_card_ids.contains(*id))
+                    .cloned()
+                    .collect()
+            });
+            if !stale_ids.is_empty() {
+                signals.card_signals.update(|cs| {
+                    for id in &stale_ids {
+                        cs.remove(id);
+                    }
+                });
+                signals.list_cards.update(|lc| {
+                    for ids in lc.values_mut() {
+                        ids.retain(|id| !stale_ids.contains(id));
+                    }
+                });
+            }
+
+            // Rebuild list_order from fresh data (sorted by position).
+            let mut sorted_lists = data.lists.clone();
+            sorted_lists.sort_by(|a, b| a.position.cmp(&b.position));
+            let new_list_order: Vec<String> = sorted_lists.iter().map(|l| l.id.clone()).collect();
+            signals.list_order.set(new_list_order);
+
+            // Rebuild list_cards from fresh data.
+            let new_list_cards: std::collections::HashMap<String, Vec<String>> = data.lists.iter()
+                .map(|l| {
+                    let mut card_ids: Vec<_> = data.cards.iter()
+                        .filter(|c| c.list_id == l.id)
+                        .collect();
+                    card_ids.sort_by(|a, b| a.position.cmp(&b.position));
+                    let ids: Vec<String> = card_ids.iter().map(|c| c.id.clone()).collect();
+                    (l.id.clone(), ids)
+                })
+                .collect();
+            signals.list_cards.set(new_list_cards);
+
+            // Anchor last_seen_seq from the fresh board_seq.
+            signals.last_seen_seq.set(data.board_seq);
+        }
+        Err(e) => {
+            console_log(&format!("[ws-client] refresh_board error for board={board_id}: {e}"));
+        }
+    }
 }
 
 /// Build the WebSocket URL for a board based on the current window location.
@@ -165,6 +416,7 @@ pub fn ws_url_for(board_id: &str) -> String {
 /// `own_client_id` is compared against the event's client_id for D-05 self-echo suppression.
 ///
 /// This function compiles under both wasm32 and ssr (the non-wasm stub calls it too).
+/// Seq-gap detection is handled by `apply_board_event_async` (WASM) before this is called.
 pub fn apply_board_event(signals: BoardSignals, event: BoardEvent, own_client_id: &str) {
     match event {
         BoardEvent::Connected { client_id, board_seq } => {
@@ -172,6 +424,8 @@ pub fn apply_board_event(signals: BoardSignals, event: BoardEvent, own_client_id
             signals.own_client_id.set(Some(client_id));
             // Anchor last_seen_seq from the handshake
             signals.last_seen_seq.set(board_seq);
+            // Mark connected state
+            signals.ws_connected.set(true);
         }
 
         BoardEvent::CardMoved {
@@ -497,8 +751,8 @@ pub fn apply_board_event(signals: BoardSignals, event: BoardEvent, own_client_id
         BoardEvent::ListArchived { board_seq, .. } => { signals.last_seen_seq.set(board_seq); }
 
         BoardEvent::Refresh => {
-            // 06-03: trigger board_data.refetch() via a signal
-            // Stub: no-op for now
+            // Handled by apply_board_event_async (WASM path) before reaching here.
+            // In SSR/test builds: no-op.
         }
     }
 }

@@ -93,6 +93,14 @@ pub struct BoardSignals {
     /// currently open in the detail modal (D-09). The modal watches this signal and auto-closes
     /// with a "archived by another user" notice after 2500ms. Cleared by the modal on close.
     pub remote_archived_card_id: RwSignal<Option<String>>,
+    // ── RT-02 Reconnect state (Phase 6) ────────────────────────────────────
+    /// Number of consecutive failed reconnect attempts (D-01/RT-02).
+    /// 0 = connected or no failure yet. Set by the reconnect loop; read by ReconnectToast.
+    /// The toast renders only when reconnect_attempts >= 2 (silent on first transient drop).
+    pub reconnect_attempts: RwSignal<u32>,
+    /// True when the WebSocket is successfully connected (received Connected handshake).
+    /// False while connecting, disconnected, or reconnecting.
+    pub ws_connected: RwSignal<bool>,
 }
 
 /// Board view page component (`/board/:id`).
@@ -234,6 +242,9 @@ pub fn BoardPage() -> impl IntoView {
                                     highlight_card_id: RwSignal::new(None),
                                     fading_card_ids: RwSignal::new(HashSet::new()),
                                     remote_archived_card_id: RwSignal::new(None),
+                                    // RT-02 reconnect state
+                                    reconnect_attempts: RwSignal::new(0),
+                                    ws_connected: RwSignal::new(false),
                                 };
 
                                 // Provide context for all child components

@@ -1654,6 +1654,7 @@ dependencies = [
  "dashmap",
  "dotenvy",
  "fractional_index",
+ "futures",
  "js-sys",
  "leptos",
  "leptos-use",
