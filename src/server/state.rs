@@ -16,10 +16,13 @@ pub struct ReadPool(pub SqlitePool);
 /// `FromRef` allows `LeptosOptions` and the pool newtypes to be extracted
 /// individually via `State<...>` in handlers.
 /// Note: EmailPasswordBackend is NOT stored here — axum-login manages it via AuthManagerLayer.
+/// Note: `Arc<dyn ObjectStore>` does NOT derive FromRef — upload/download handlers extract
+/// `State<AppState>` and read `state.storage` directly (same approach as `mailer`).
 #[derive(Clone, FromRef)]
 pub struct AppState {
     pub leptos_options: LeptosOptions,
     pub write_pool: WritePool,
     pub read_pool: ReadPool,
-    pub mailer: Arc<dyn Mailer>, // pluggable mailer (D-13, COLLAB-02)
+    pub mailer: Arc<dyn Mailer>,                          // pluggable mailer (D-13, COLLAB-02)
+    pub storage: Arc<dyn object_store::ObjectStore>,      // pluggable attachment store (DETAIL-08)
 }

@@ -135,6 +135,20 @@ async fn start_server() {
     // Console mailer (D-13 floor); SMTP deferred to Phase 7
     let mailer: Arc<dyn Mailer> = Arc::new(ConsoleMailer);
 
+    // Pluggable attachment storage: LocalFileSystem default, AmazonS3 when S3_BUCKET is set (DETAIL-08).
+    // Derive attachments root from STORAGE_ROOT env var, falling back to a sibling dir next to the DB.
+    let attachments_root = if let Ok(root) = std::env::var("STORAGE_ROOT") {
+        std::path::PathBuf::from(root)
+    } else {
+        // db_file_path() is e.g. "data/lanes.db"; parent is "data/"; join "attachments" → "data/attachments"
+        config
+            .db_file_path()
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("data"))
+            .join("attachments")
+    };
+    let storage = lanes::server::storage::init_storage(&attachments_root);
+
     let conf = get_configuration(None).unwrap();
     let leptos_options = conf.leptos_options;
     let addr = leptos_options.site_addr;
@@ -145,6 +159,7 @@ async fn start_server() {
         write_pool: WritePool(write_pool),
         read_pool: ReadPool(read_pool),
         mailer,
+        storage,
     };
 
     let app = Router::new()
