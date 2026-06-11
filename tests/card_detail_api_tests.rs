@@ -731,6 +731,77 @@ mod card_detail_api_tests {
         assert_eq!(notif_count, 0, "non-board-member must NOT receive a notification (T-05-14)");
     }
 
+    /// record_attachment_inner inserts an attachments row and bumps cards.attachment_count.
+    #[tokio::test]
+    async fn test_record_attachment_bumps_count() {
+        use lanes::api::card_detail_api::record_attachment_inner;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        let user_id = insert_user_direct(&write_pool, "attach_owner@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Attachment Board").await;
+        insert_member_direct(&write_pool, &board_id, &user_id, "owner").await;
+        let list_id = insert_list_direct(&write_pool, &board_id, "Attach List").await;
+        let card_id = insert_card_direct(&write_pool, &board_id, &list_id, "Attach Card", 1).await;
+
+        // attachment_count starts at 0
+        let count_before: i64 =
+            sqlx::query_scalar("SELECT attachment_count FROM cards WHERE id = ?")
+                .bind(&card_id)
+                .fetch_one(&write_pool)
+                .await
+                .expect("fetch initial count");
+        assert_eq!(count_before, 0, "initial attachment_count must be 0");
+
+        let url = format!("/api/attachments/{}/{}/abc-uuid.pdf", board_id, card_id);
+        let result = record_attachment_inner(
+            &write_pool,
+            &card_id,
+            &user_id,
+            "document.pdf",
+            &url,
+            1024,
+        )
+        .await;
+        assert!(result.is_ok(), "record_attachment_inner must succeed: {:?}", result.err());
+
+        let attachment = result.unwrap();
+        assert_eq!(attachment.filename, "document.pdf", "filename must match");
+        assert_eq!(attachment.url, url, "url must match");
+        assert_eq!(attachment.size_bytes, 1024, "size must match");
+        assert_eq!(attachment.card_id, card_id, "card_id must match");
+
+        // attachment_count must have been bumped to 1
+        let count_after: i64 =
+            sqlx::query_scalar("SELECT attachment_count FROM cards WHERE id = ?")
+                .bind(&card_id)
+                .fetch_one(&write_pool)
+                .await
+                .expect("fetch count after");
+        assert_eq!(count_after, 1, "attachment_count must be 1 after inserting an attachment");
+
+        // Insert a second attachment — count must be 2
+        let url2 = format!("/api/attachments/{}/{}/def-uuid.png", board_id, card_id);
+        let result2 = record_attachment_inner(
+            &write_pool,
+            &card_id,
+            &user_id,
+            "image.png",
+            &url2,
+            2048,
+        )
+        .await;
+        assert!(result2.is_ok(), "second record_attachment_inner must succeed");
+
+        let count_two: i64 =
+            sqlx::query_scalar("SELECT attachment_count FROM cards WHERE id = ?")
+                .bind(&card_id)
+                .fetch_one(&write_pool)
+                .await
+                .expect("fetch count after second");
+        assert_eq!(count_two, 2, "attachment_count must be 2 after two attachments");
+    }
+
     /// assign_member_inner inserts card_members AND watchers rows in the same transaction.
     #[tokio::test]
     async fn test_assign_member_auto_watches() {

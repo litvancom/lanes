@@ -1132,3 +1132,74 @@ pub async fn get_card_detail(
             ServerFnError::new("Failed to load card")
         })
 }
+
+// ---------------------------------------------------------------------------
+// Attachment inner function (SSR-only)
+// ---------------------------------------------------------------------------
+
+/// Internal: insert an attachments row and bump cards.attachment_count in the same transaction.
+///
+/// Security: no path traversal possible — `url` is the server-constructed download path,
+/// never derived from user-supplied filename (T-05-18). The `filename` stored is the
+/// display name only; the storage key (UUID-based) is managed by the upload handler.
+///
+/// Transaction: INSERT attachments + UPDATE cards.attachment_count (Pitfall 3 count consistency).
+///
+/// Returns the newly inserted Attachment row (used by the upload handler to respond with JSON
+/// and by the AttachmentsSection to push into the modal-scoped signal).
+#[cfg(feature = "ssr")]
+pub async fn record_attachment_inner(
+    pool: &sqlx::SqlitePool,
+    card_id: &str,
+    uploader_id: &str,
+    filename: &str,
+    url: &str,
+    size_bytes: i64,
+) -> Result<crate::models::Attachment, sqlx::Error> {
+    use uuid::Uuid;
+    use crate::server::now_millis;
+
+    let id = Uuid::now_v7().to_string();
+    let now = now_millis().map_err(|_| sqlx::Error::Decode("clock error".into()))?;
+
+    let mut tx = pool.begin().await?;
+
+    sqlx::query(
+        "INSERT INTO attachments (id, card_id, uploader_id, filename, url, size_bytes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(card_id)
+    .bind(uploader_id)
+    .bind(filename)
+    .bind(url)
+    .bind(size_bytes)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+
+    // Bump attachment_count by recounting (Pitfall 3 — same-transaction count update)
+    let new_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM attachments WHERE card_id = ?",
+    )
+    .bind(card_id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    sqlx::query("UPDATE cards SET attachment_count = ? WHERE id = ?")
+        .bind(new_count)
+        .bind(card_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    Ok(crate::models::Attachment {
+        id,
+        card_id: card_id.to_string(),
+        filename: filename.to_string(),
+        url: url.to_string(),
+        size_bytes,
+        uploader_id: uploader_id.to_string(),
+        created_at: now,
+    })
+}
