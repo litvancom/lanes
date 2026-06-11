@@ -173,12 +173,27 @@ pub async fn create_card(
     title: String,
 ) -> Result<Card, ServerFnError> {
     use crate::auth::helpers::require_board_member;
+    use crate::api::list_api::board_id_for_list;
     use crate::server::state::AppState;
 
     let state = expect_context::<AppState>();
 
     // Auth + membership gate first (T-04-04)
     require_board_member(&board_id, &state.read_pool.0).await?;
+
+    // Verify the target list actually belongs to the authorized board. The membership
+    // gate authorizes against the client-supplied board_id but does NOT tie the
+    // client-supplied list_id to that board. Without this check a member of board A
+    // could create a card on a list belonging to board B (CR-02).
+    let owning_board = board_id_for_list(&state.read_pool.0, &list_id).await
+        .map_err(|e| {
+            tracing::error!("board_id_for_list error: {e}");
+            ServerFnError::new("Failed to load list")
+        })?
+        .ok_or_else(|| ServerFnError::new("list not found"))?;
+    if owning_board != board_id {
+        return Err(ServerFnError::new("list not on this board"));
+    }
 
     // Validate title before computing position (fail fast)
     let title = title.trim().to_string();
