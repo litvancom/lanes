@@ -578,19 +578,33 @@ fn commit_drop(
 
     // --- (d) Dispatch server fn ---
     let board_id = board_signals.board_id.get_untracked();
-    board_signals.move_card_action.dispatch(MoveCard {
+    let action = board_signals.move_card_action;
+    action.dispatch(MoveCard {
         board_id,
         card_id: card_id.clone(),
         to_list_id: to_list_id.clone(),
         new_position: new_position.clone(),
     });
 
-    // --- (e) Watch for error → rollback ---
+    // Capture the action version produced by THIS dispatch. `move_card_action` is a
+    // single shared action whose `.value()` retains the previous dispatch's result until
+    // the new one resolves, and the Effect below runs once on creation. Gating on an
+    // exact version match ensures this Effect (a) ignores the stale pre-dispatch value,
+    // and (b) stops acting once a newer drop supersedes it — preventing the per-drop
+    // Effect accumulation from compounding rollbacks on a single error (CR-03).
+    let my_version = action.version().get_untracked();
+
+    // --- (e) Watch for error → rollback (scoped to this dispatch only) ---
     let card_id_for_rollback = card_id.clone();
     let to_list_id_for_rollback = to_list_id.clone();
     let snapshot_for_rollback = snapshot.clone();
     Effect::new(move |_| {
-        if let Some(Err(_)) = board_signals.move_card_action.value().get() {
+        // Only react to results belonging to this dispatch. A newer drop advances
+        // `version()`, after which this Effect no longer matches and goes inert.
+        if action.version().get() != my_version {
+            return;
+        }
+        if let Some(Err(_)) = action.value().get() {
             // Rollback: restore card signal to pre-move state
             if let Some(sig) = board_signals.card_signals.with(|cs| cs.get(&card_id_for_rollback).copied()) {
                 sig.update(|c| {
