@@ -221,6 +221,17 @@ async fn handle_ws(mut socket: WebSocket, board_id: String, user: AuthUser, stat
     state.user_notifs.remove(&user.id);
     // presence.leave broadcasts ViewerLeft to remaining viewers and removes from viewers map.
     state.presence.leave(&board_id, &user.id);
+
+    // SC4 leak diagnostic: log the remaining broadcast subscriber count for this board.
+    // With board_rx dropped above, this should equal (active_tab_count - 1).
+    // When all tabs close, it should reach 0. Use during manual churn test (Task 3 checkpoint).
+    let remaining = state.board_rooms.receiver_count(&board_id);
+    tracing::debug!(
+        user_id = %user.id,
+        board_id = %board_id,
+        remaining_subscribers = remaining,
+        "ws_handler: connection closed — cleanup complete"
+    );
 }
 
 /// Process a client→server message from inside the relay loop.

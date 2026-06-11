@@ -93,4 +93,15 @@ impl BoardRoomRegistry {
             let _ = room.tx.send(event);
         }
     }
+
+    /// Return the current number of active broadcast receivers for a board.
+    ///
+    /// Used in the ws_handler cleanup log (SC4 diagnostics): after all tabs close,
+    /// this should return 0, confirming no subscriber/task leak under open/close churn.
+    pub fn receiver_count(&self, board_id: &str) -> usize {
+        self.0
+            .get(board_id)
+            .map(|room| room.tx.receiver_count())
+            .unwrap_or(0)
+    }
 }
