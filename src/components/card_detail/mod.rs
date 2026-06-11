@@ -14,16 +14,18 @@
 //! Close: backdrop click, × button, or Escape → `use_navigate()` replace to /board/{id}.
 //! Width override: 760px via `.lns-card-modal` class (does not touch Phase-3 `.lns-modal-content`).
 
+pub mod activity;
 pub mod checklist;
 pub mod pickers;
 
 use leptos::prelude::*;
 use leptos_router::components::Redirect;
-use crate::models::{CardDetail, ChecklistItem};
+use crate::models::{ActivityEntry, CardDetail, ChecklistItem};
 use crate::routes::board::BoardSignals;
 use crate::api::card_detail_api::{UpdateCardTitle, UpdateCardDescription};
 use crate::components::modal::Modal;
 use crate::components::icon::Icon;
+use crate::components::card_detail::activity::ActivitySection;
 use crate::components::card_detail::checklist::ChecklistSection;
 use crate::components::card_detail::pickers::{LabelPicker, DatePicker, PriorityPicker, MemberPicker};
 
@@ -46,7 +48,7 @@ fn safe_cover_color_str(c: &str) -> String {
 }
 
 /// Format epoch millis as a relative "N units ago" string.
-fn relative_time(created_at_ms: i64) -> String {
+pub(crate) fn relative_time(created_at_ms: i64) -> String {
     let now_ms: i64;
     #[cfg(feature = "ssr")]
     {
@@ -159,6 +161,10 @@ pub fn CardDetailModal(
                         // Modal-scoped checklist_items signal (seeded from CardDetail)
                         let checklist_items: RwSignal<Vec<ChecklistItem>> =
                             RwSignal::new(data.checklist_items.clone());
+
+                        // Modal-scoped activity signal (seeded from CardDetail.activity)
+                        let activity: RwSignal<Vec<ActivityEntry>> =
+                            RwSignal::new(data.activity.clone());
 
                         // Picker visibility signals (one per picker)
                         let show_member_picker = RwSignal::new(false);
@@ -487,12 +493,15 @@ pub fn CardDetailModal(
                                             />
                                         </div>
 
-                                        // ── Activity section (placeholder for Plan 04) ───────
+                                        // ── Activity section ──────────────────────────────
                                         <div class="lns-modal-section">
-                                            <h4>
-                                                <Icon name="chat"/>
-                                                " Activity"
-                                            </h4>
+                                            <ActivitySection
+                                                board_id=board_id_sv.get_value()
+                                                card_id=card_id.clone()
+                                                activity=activity
+                                                board_members=board_members.get_value()
+                                                card_signal_key=card_id.clone()
+                                            />
                                         </div>
                                     </div>
 
