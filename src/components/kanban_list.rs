@@ -75,10 +75,14 @@ pub fn KanbanList(
             }
         });
 
-        // Hit-test: find which list (and before-card) is under the pointer (client-only)
+        // Hit-test: find which list (and before-card) is under the pointer (client-only).
+        // Pass the dragged card id so the hit-test skips the dragged card's own element —
+        // otherwise dragging a card near itself can select its own data-card-id as the
+        // before-card, computing a position against an index removed during exclusion (WR-04).
         #[cfg(target_arch = "wasm32")]
         {
-            update_hover_target(x, y, hover_list_id, before_card_id);
+            let dragged_id = drag_info.with_untracked(|d| d.as_ref().map(|i| i.card_id.clone()));
+            update_hover_target(x, y, hover_list_id, before_card_id, dragged_id.as_deref());
         }
     });
 
@@ -372,6 +376,7 @@ pub fn KanbanList(
 
 /// Walk document.elementsFromPoint to find which list and before-card the pointer is over.
 /// Sets hover_list_id and before_card_id based on what's under the pointer.
+/// Skips the dragged card's own element so it is never selected as the before-card (WR-04).
 /// WASM-only — no-op on server.
 #[cfg(target_arch = "wasm32")]
 fn update_hover_target(
@@ -379,6 +384,7 @@ fn update_hover_target(
     y: f64,
     hover_list_id: leptos::prelude::RwSignal<Option<String>>,
     before_card_id: leptos::prelude::RwSignal<Option<String>>,
+    dragged_card_id: Option<&str>,
 ) {
     use wasm_bindgen::JsCast;
     let Some(window) = leptos::web_sys::window() else { return; };
@@ -394,6 +400,11 @@ fn update_hover_target(
 
         if found_card.is_none() {
             if let Some(card_id) = el.get_attribute("data-card-id") {
+                // Skip the dragged card's own element: selecting it as the before-card
+                // computes a position against an index removed during exclusion (WR-04).
+                if dragged_card_id == Some(card_id.as_str()) {
+                    continue;
+                }
                 // We're over a card; the dragged card will be inserted before this card
                 found_card = Some(card_id);
                 // Its data-list-id is the target list
@@ -505,9 +516,9 @@ fn commit_drop(
         None => return,
     };
 
-    // Resolve before-card from hover target (currently: append to hovered list).
-    // Full hit-testing for before-card is implemented in update_hover_target_with_card below.
-    // For now we use None (append) — the WASM path refines this via before_card_id signal.
+    // Resolve before-card from hover target. `update_hover_target` (WASM pointermove)
+    // sets `before_card_id` to the card the dragged card should be inserted before,
+    // skipping the dragged card's own element (WR-04); None means append to the list.
     let before_card_id = board_signals.before_card_id.get_untracked();
 
     // --- (a) Capture pre-move snapshot ---
