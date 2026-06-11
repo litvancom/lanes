@@ -1,12 +1,13 @@
 use leptos::prelude::*;
 use leptos_meta::*;
-use leptos_router::{components::Router, components::Routes, components::Route, path};
+use leptos_router::{components::Router, components::Routes, components::Route, components::ParentRoute, path};
 use crate::routes::workspace::WorkspacePage;
 use crate::routes::signup::SignupPage;
 use crate::routes::login::LoginPage;
 use crate::routes::invite::InviteAcceptPage;
 use crate::routes::board::BoardPage;
 use crate::routes::archive::ArchivePage;
+use crate::routes::card_detail::CardDetailRoute;
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -35,7 +36,10 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/signup") view=SignupPage/>
                 <Route path=path!("/login") view=LoginPage/>
                 <Route path=path!("/invite/:token") view=InviteAcceptPage/>
-                <Route path=path!("/board/:id") view=BoardPage/>
+                <ParentRoute path=path!("/board/:id") view=BoardPage>
+                    <Route path=path!("card/:card_num") view=CardDetailRoute/>
+                    <Route path=path!("") view=|| ()/>
+                </ParentRoute>
                 <Route path=path!("/archive") view=ArchivePage/>
             </Routes>
         </Router>

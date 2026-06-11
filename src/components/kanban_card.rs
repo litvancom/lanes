@@ -148,6 +148,8 @@ pub fn KanbanCard(
     let list_id_clone = list_id.clone();
     let list_id_for_drag = list_id.clone();
 
+    let board_id_for_click = card.get_untracked().board_id.clone();
+
     view! {
         <div
             class="lns-card"
@@ -156,6 +158,22 @@ pub fn KanbanCard(
             }
             data-card-id=move || card.get_untracked().id.clone()
             data-list-id=list_id_clone.clone()
+            on:click=move |_ev| {
+                // Only open the modal if no drag occurred (guard: is_dragging must be false).
+                // A drag-release fires a click event on the source element — we suppress it here.
+                let is_dragging = drag_info.get().map_or(false, |d| d.is_dragging);
+                if !is_dragging {
+                    let cn = card.get_untracked().card_num;
+                    let bid = board_id_for_click.clone();
+                    let path = format!("/board/{}/card/{}", bid, cn);
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        use leptos_router::hooks::use_navigate;
+                        let navigate = use_navigate();
+                        navigate(&path, Default::default());
+                    }
+                }
+            }
             on:pointerdown=move |ev: leptos::ev::PointerEvent| {
                 ev.prevent_default();
                 let card_id = card.get_untracked().id.clone();

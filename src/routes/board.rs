@@ -16,6 +16,7 @@ use leptos::prelude::*;
 use leptos_router::params::Params;
 use leptos_router::hooks::use_params;
 use leptos_router::components::Redirect;
+use leptos_router::components::Outlet;
 use std::collections::{HashMap, HashSet};
 use crate::models::Card;
 use crate::api::board_api::{get_board, TouchLastViewed};
@@ -337,6 +338,8 @@ pub fn BoardPage() -> impl IntoView {
                                                 })
                                         }
                                     }
+                                    // Card detail modal renders here when /board/:id/card/:card_num is active
+                                    <Outlet/>
                                 }.into_any()
                             }
                         }
