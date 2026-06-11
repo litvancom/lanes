@@ -227,7 +227,7 @@ pub fn KanbanList(
                 let lid = list_id_for_drag_class.clone();
                 move || hover_list_id.get().map_or(false, |id| id == lid)
             }
-            attr:data-list-id=list_id_for_drag_class.clone()
+            data-list-id=list_id_for_drag_class.clone()
         >
             // ── Drag rollback error banner (non-blocking) ────────────────
             <Show when=move || drag_error.get().is_some()>

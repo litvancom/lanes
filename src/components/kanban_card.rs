@@ -18,6 +18,32 @@ fn safe_cover_color(c: &str) -> &str {
     "transparent"
 }
 
+/// Current Unix time in milliseconds, resolved in a WASM-safe way.
+///
+/// `std::time::SystemTime::now()` panics on `wasm32-unknown-unknown`
+/// ("time not implemented on this platform"), which crashed board hydration.
+/// On the server we use `SystemTime`; in the browser client we use the JS clock.
+fn current_unix_millis() -> i64 {
+    #[cfg(feature = "ssr")]
+    {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        return SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+    }
+    #[cfg(all(not(feature = "ssr"), feature = "hydrate"))]
+    {
+        // js_sys::Date::now() returns f64 millis since the Unix epoch.
+        return js_sys::Date::now() as i64;
+    }
+    #[cfg(all(not(feature = "ssr"), not(feature = "hydrate")))]
+    {
+        // No-feature builds (e.g. rust-analyzer / bare `cargo check`) never run this.
+        return 0;
+    }
+}
+
 /// Format the due-at epoch millis into a human label and tone class.
 ///
 /// Rules (mirrors `formatDue` in `components.jsx`):
@@ -28,12 +54,7 @@ fn safe_cover_color(c: &str) -> &str {
 ///
 /// Returns `(label, tone_class)`. `tone_class` is one of "", "due-overdue", "due-soon".
 pub fn format_due(due_at_ms: i64) -> (String, &'static str) {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
+    let now_ms = current_unix_millis();
 
     // Today's midnight UTC (start of today)
     let ms_per_day: i64 = 86_400_000;
@@ -111,8 +132,8 @@ pub fn KanbanCard(
             class:lns-card--dragging=move || {
                 drag_info.get().map_or(false, |d| d.is_dragging && d.card_id == card.get_untracked().id)
             }
-            attr:data-card-id=move || card.get_untracked().id.clone()
-            attr:data-list-id=list_id_clone.clone()
+            data-card-id=move || card.get_untracked().id.clone()
+            data-list-id=list_id_clone.clone()
             on:pointerdown=move |ev: leptos::ev::PointerEvent| {
                 ev.prevent_default();
                 let card_id = card.get_untracked().id.clone();

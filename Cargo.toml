@@ -40,6 +40,8 @@ async-trait = { version = "0.1", optional = true }
 # --- Hydrate only (WASM) ---
 console_error_panic_hook = { version = "0.1", optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
+# js-sys gives the WASM client a real clock (Date.now); std::time panics on wasm32.
+js-sys = { version = "0.3", optional = true }
 
 [features]
 default = []
@@ -47,6 +49,7 @@ hydrate = [
     "leptos/hydrate",
     "dep:console_error_panic_hook",
     "dep:wasm-bindgen",
+    "dep:js-sys",
     "dep:fractional_index",
 ]
 ssr = [

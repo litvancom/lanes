@@ -1475,6 +1475,7 @@ dependencies = [
  "console_error_panic_hook",
  "dotenvy",
  "fractional_index",
+ "js-sys",
  "leptos",
  "leptos-use",
  "leptos_axum",
