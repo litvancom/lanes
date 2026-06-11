@@ -357,6 +357,8 @@ pub fn apply_board_event(signals: BoardSignals, event: BoardEvent, own_client_id
             let is_remote = client_id.as_str() != own_client_id || own_client_id.is_empty();
 
             if is_remote {
+                // D-09: signal the modal that this card was remotely archived
+                signals.remote_archived_card_id.set(Some(card_id.clone()));
                 // D-06: insert into fading_card_ids, wait 350ms for CSS animation, then remove
                 signals.fading_card_ids.update(|fids| { fids.insert(card_id.clone()); });
                 #[cfg(target_arch = "wasm32")]

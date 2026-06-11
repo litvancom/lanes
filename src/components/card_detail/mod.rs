@@ -23,6 +23,7 @@ pub mod sidebar;
 use leptos::prelude::*;
 use leptos_router::components::Redirect;
 use crate::models::{ActivityEntry, Attachment, CardDetail, ChecklistItem};
+use crate::models::events::CardPatch;
 use crate::routes::board::BoardSignals;
 use crate::api::card_detail_api::{UpdateCardTitle, UpdateCardDescription};
 use crate::components::modal::Modal;
@@ -140,12 +141,24 @@ pub fn CardDetailModal(
     let desc_input = RwSignal::new(String::new());
     let desc_changed = RwSignal::new(false);
 
+    // D-07/D-08: focus guards prevent remote patches from overwriting in-progress edits.
+    let title_focused = RwSignal::new(false);
+    let desc_focused = RwSignal::new(false);
+
+    // D-07/D-08: pending remote patch (CardUpdated from another client while modal is open).
+    // The Effect below applies any queued patch only when the relevant field is not focused.
+    let pending_remote_patch: RwSignal<Option<CardPatch>> = RwSignal::new(None);
+
     // Board signals context (for per-card RwSignal<Card> write-through on title save)
     let board_signals: Option<BoardSignals> = use_context::<BoardSignals>();
 
     // Snapshot of the title prior to an optimistic save, for revert-on-error (WR-02).
     let title_snapshot: RwSignal<Option<String>> = RwSignal::new(None);
     let title_error: RwSignal<Option<String>> = RwSignal::new(None);
+
+    // D-09: "archived by another user" notice signal (shown when remote CardArchived fires
+    // while the modal is open for that card).
+    let archived_notice: RwSignal<bool> = RwSignal::new(false);
 
     let _ = card_num; // used in footer via detail_data
 
@@ -255,6 +268,61 @@ pub fn CardDetailModal(
                             }
                         });
 
+                        // D-07: when title_focused goes false and a pending patch is waiting,
+                        // apply its title to the board card signal and clear the patch.
+                        {
+                            let open_card_id = card_id.clone();
+                            Effect::new(move |_| {
+                                if !title_focused.get() {
+                                    if let Some(patch) = pending_remote_patch.get_untracked() {
+                                        if let Some(new_title) = patch.title.clone() {
+                                            if let Some(bs) = board_signals {
+                                                bs.card_signals.with(|cs| {
+                                                    if let Some(sig) = cs.get(&open_card_id) {
+                                                        sig.update(|c| c.title = new_title);
+                                                    }
+                                                });
+                                            }
+                                        }
+                                        // Clear patch only if title was the only pending field
+                                        if !desc_focused.get_untracked() {
+                                            pending_remote_patch.set(None);
+                                        }
+                                    }
+                                }
+                            });
+                        }
+
+                        // D-09: watch remote_archived_card_id; when it matches the open card,
+                        // show the archive notice and navigate back to the board after 2500ms.
+                        {
+                            let open_card_id_d09 = card_id.clone();
+                            Effect::new(move |_| {
+                                let archived_id = board_signals
+                                    .and_then(|bs| bs.remote_archived_card_id.get());
+                                if archived_id.as_deref() == Some(open_card_id_d09.as_str()) {
+                                    // Clear the signal so it doesn't re-trigger on other modals
+                                    if let Some(bs) = board_signals {
+                                        bs.remote_archived_card_id.set(None);
+                                    }
+                                    archived_notice.set(true);
+                                    // Navigate back after 2500ms (D-09)
+                                    let board_id_path = board_id_sv.get_value();
+                                    #[cfg(target_arch = "wasm32")]
+                                    {
+                                        wasm_bindgen_futures::spawn_local(async move {
+                                            gloo_timers::future::TimeoutFuture::new(2500).await;
+                                            use leptos_router::hooks::use_navigate;
+                                            use leptos_router::NavigateOptions;
+                                            let navigate = use_navigate();
+                                            let path = format!("/board/{}", board_id_path);
+                                            navigate(&path, NavigateOptions { replace: true, ..Default::default() });
+                                        });
+                                    }
+                                }
+                            });
+                        }
+
                         view! {
                             <Modal show=show>
                                 // ── Cover band ──────────────────────────────────────
@@ -334,6 +402,7 @@ pub fn CardDetailModal(
                                                                     if t.trim().is_empty() {
                                                                         title_input.set(saved);
                                                                         editing_title.set(false);
+                                                                        title_focused.set(false);
                                                                     } else {
                                                                         // Optimistic write-through to per-card signal (D-15),
                                                                         // snapshotting prior title for revert-on-error (WR-02)
@@ -353,11 +422,13 @@ pub fn CardDetailModal(
                                                                             client_id: board_signals.and_then(|bs| bs.own_client_id.get_untracked()).unwrap_or_default(),
                                                                         });
                                                                         editing_title.set(false);
+                                                                        title_focused.set(false);
                                                                     }
                                                                 }
                                                                 "Escape" => {
                                                                     title_input.set(saved);
                                                                     editing_title.set(false);
+                                                                    title_focused.set(false);
                                                                 }
                                                                 _ => {}
                                                             }
@@ -367,6 +438,8 @@ pub fn CardDetailModal(
                                                         let cid = card_id_sv.get_value();
                                                         let bid = board_id_sv.get_value();
                                                         move |_| {
+                                                            // D-07: clear title_focused so pending remote patches can apply
+                                                            title_focused.set(false);
                                                             let saved = initial_title_sv.get_value();
                                                             let t = title_input.get_untracked();
                                                             if t.trim().is_empty() {
@@ -392,6 +465,7 @@ pub fn CardDetailModal(
                                                             }
                                                         }
                                                     }
+                                                    on:focus=move |_| title_focused.set(true)
                                                     autofocus
                                                 />
                                             </Show>
@@ -528,6 +602,8 @@ pub fn CardDetailModal(
                                                             desc_changed.set(true);
                                                             desc_input.set(event_target_value(&ev));
                                                         }
+                                                        on:focus=move |_| desc_focused.set(true)
+                                                        on:blur=move |_| desc_focused.set(false)
                                                     />
                                                     <Show when=move || desc_changed.get()>
                                                         <div style="display: flex; gap: 6px; margin-top: 6px">
@@ -545,6 +621,7 @@ pub fn CardDetailModal(
                                                                     });
                                                                     editing_desc.set(false);
                                                                     desc_changed.set(false);
+                                                                    desc_focused.set(false);
                                                                 }
                                                             >
                                                                 "Save"
@@ -554,6 +631,7 @@ pub fn CardDetailModal(
                                                                 on:click=move |_| {
                                                                     editing_desc.set(false);
                                                                     desc_changed.set(false);
+                                                                    desc_focused.set(false);
                                                                 }
                                                             >
                                                                 "Cancel"
@@ -598,6 +676,15 @@ pub fn CardDetailModal(
                                             />
                                         </div>
                                     </div>
+
+                                    // D-09: archived by another user — notice banner
+                                    <Show when=move || archived_notice.get()>
+                                        <div
+                                            style="position: absolute; top: 0; left: 0; right: 0; padding: 10px 16px; background: var(--bg-subtle); border-bottom: 1px solid var(--border); font-size: 13px; color: var(--text-secondary); text-align: center; z-index: 10"
+                                        >
+                                            "This card was archived by another user. Returning to board…"
+                                        </div>
+                                    </Show>
 
                                     // ── Sidebar (SidebarColumn: Add-to-card + Actions + footer) ──
                                     <SidebarColumn
