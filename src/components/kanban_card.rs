@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use crate::models::Card;
 use crate::components::label_chip::LabelChip;
-use crate::routes::board::DragInfo;
+use crate::routes::board::{DragInfo, BoardSignals};
 
 /// Validate a CSS color string for safe interpolation into inline styles (T-04-06).
 /// Accepts #rrggbb, #rgb, and oklch(...) shapes. Falls back to transparent/neutral.
@@ -150,11 +150,26 @@ pub fn KanbanCard(
 
     let board_id_for_click = card.get_untracked().board_id.clone();
 
+    // Phase 6: realtime highlight and fade-collapse class bindings (D-04/D-05/D-06)
+    let board_signals_ctx: Option<BoardSignals> = use_context::<BoardSignals>();
+    let card_id_for_flash = card.get_untracked().id.clone();
+    let card_id_for_fading = card_id_for_flash.clone();
+
     view! {
         <div
             class="lns-card"
             class:lns-card--dragging=move || {
                 drag_info.get().map_or(false, |d| d.is_dragging && d.card_id == card.get_untracked().id)
+            }
+            class:lns-card--remote-flash=move || {
+                board_signals_ctx
+                    .map(|bs| bs.highlight_card_id.get().as_deref() == Some(card_id_for_flash.as_str()))
+                    .unwrap_or(false)
+            }
+            class:lns-card--fading=move || {
+                board_signals_ctx
+                    .map(|bs| bs.fading_card_ids.with(|fids| fids.contains(card_id_for_fading.as_str())))
+                    .unwrap_or(false)
             }
             data-card-id=move || card.get_untracked().id.clone()
             data-list-id=list_id_clone.clone()

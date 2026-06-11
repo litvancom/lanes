@@ -2841,3 +2841,29 @@ input, textarea {
 .lns-btn--archive-confirm {
   color: var(--danger, oklch(55% 0.20 25)) !important;
 }
+
+/* ── Realtime card animations (Phase 6, UI-SPEC §230-250) ─────────────────── */
+
+/* Remote move / create flash: 1.5s box-shadow ring using accent color */
+@keyframes lns-remote-flash {
+  0%   { box-shadow: 0 0 0 2px transparent; }
+  8%   { box-shadow: 0 0 0 2px var(--accent); }
+  70%  { box-shadow: 0 0 0 2px var(--accent); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
+
+.lns-card--remote-flash {
+  animation: lns-remote-flash 1.5s ease forwards;
+}
+
+/* Remote archive fade-collapse: 350ms opacity + max-height collapse */
+@keyframes lns-card-fade-collapse {
+  0%   { opacity: 1; max-height: 300px; margin-bottom: 8px; }
+  100% { opacity: 0; max-height: 0;     margin-bottom: 0;   }
+}
+
+.lns-card--fading {
+  animation: lns-card-fade-collapse 350ms ease forwards;
+  overflow: hidden;
+  pointer-events: none;
+}

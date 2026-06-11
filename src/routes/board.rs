@@ -86,6 +86,9 @@ pub struct BoardSignals {
     /// Card currently highlighted due to a remote move (D-04/D-05).
     /// None = no highlight active. Set by apply_board_event; cleared after ~1.5s.
     pub highlight_card_id: RwSignal<Option<String>>,
+    /// Cards currently playing the fade-collapse animation (D-06: remote archive).
+    /// Inserted by apply_board_event on CardArchived; removed after 350ms once CSS animation ends.
+    pub fading_card_ids: RwSignal<HashSet<String>>,
 }
 
 /// Board view page component (`/board/:id`).
@@ -225,6 +228,7 @@ pub fn BoardPage() -> impl IntoView {
                                     own_client_id: RwSignal::new(None),
                                     last_seen_seq: RwSignal::new(data.board_seq),
                                     highlight_card_id: RwSignal::new(None),
+                                    fading_card_ids: RwSignal::new(HashSet::new()),
                                 };
 
                                 // Provide context for all child components

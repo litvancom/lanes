@@ -246,13 +246,258 @@ pub fn apply_board_event(signals: BoardSignals, event: BoardEvent, own_client_id
             }
         }
 
+        BoardEvent::CardAdded { board_seq, client_id, card } => {
+            signals.last_seen_seq.set(board_seq);
+
+            let is_remote = client_id.as_str() != own_client_id || own_client_id.is_empty();
+
+            // Build a full Card from the CardSummary payload.
+            // Counters (checklist, comments, attachments) start at 0 — the adder's
+            // own UI already shows the card; remote viewers will see 0 until next sync.
+            let new_card = crate::models::Card {
+                id: card.id.clone(),
+                list_id: card.list_id.clone(),
+                board_id: card.board_id.clone(),
+                card_num: card.card_num,
+                title: card.title.clone(),
+                position: card.position.clone(),
+                priority: card.priority.clone(),
+                due_at: card.due_at,
+                done: card.done,
+                archived: false,
+                cover: card.cover.clone(),
+                labels: card.labels.clone(),
+                checklist_done: 0,
+                checklist_total: 0,
+                comment_count: 0,
+                attachment_count: 0,
+                member_ids: card.member_ids.clone(),
+            };
+
+            // Insert card signal
+            let new_sig = RwSignal::new(new_card);
+            signals.card_signals.update(|cs| {
+                cs.insert(card.id.clone(), new_sig);
+            });
+
+            // Append card id to the correct list (at the end; server positions are correct)
+            let list_id = card.list_id.clone();
+            let card_id = card.id.clone();
+            let position = card.position.clone();
+            signals.list_cards.update(|lc| {
+                let ids = lc.entry(list_id).or_default();
+                if !ids.contains(&card_id) {
+                    // Insert in sorted position order
+                    let insert_at = ids.iter().position(|other_id| {
+                        signals.card_signals.with_untracked(|cs| {
+                            cs.get(other_id)
+                                .map(|sig| sig.with_untracked(|c| c.position > position))
+                                .unwrap_or(false)
+                        })
+                    });
+                    match insert_at {
+                        Some(idx) => ids.insert(idx, card_id),
+                        None => ids.push(card_id),
+                    }
+                }
+            });
+
+            // Flash highlight for remote card additions (D-04/D-05)
+            if is_remote {
+                let cid = card.id.clone();
+                signals.highlight_card_id.set(Some(cid.clone()));
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let highlight_sig = signals.highlight_card_id;
+                    wasm_bindgen_futures::spawn_local(async move {
+                        gloo_timers::future::TimeoutFuture::new(1500).await;
+                        if highlight_sig.with_untracked(|h| h.as_deref() == Some(cid.as_str())) {
+                            highlight_sig.set(None);
+                        }
+                    });
+                }
+            }
+        }
+
+        BoardEvent::CardUpdated { board_seq, client_id, card_id, patch } => {
+            signals.last_seen_seq.set(board_seq);
+
+            // Apply only the Some fields from the patch.
+            // Task 3 will gate title/description on focus signals; for now apply all.
+            let card_sig = signals.card_signals.with(|cs| cs.get(&card_id).copied());
+            if let Some(sig) = card_sig {
+                sig.update(|c| {
+                    if let Some(t) = patch.title { c.title = t; }
+                    if let Some(d) = patch.description { let _ = d; /* description not on Card thumbnail */ }
+                    if let Some(cv) = patch.cover { c.cover = Some(cv); }
+                    if let Some(done) = patch.done { c.done = done; }
+                });
+            }
+
+            // Flash for remote updates (D-05)
+            let is_remote = client_id.as_str() != own_client_id || own_client_id.is_empty();
+            if is_remote {
+                signals.highlight_card_id.set(Some(card_id.clone()));
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let highlight_sig = signals.highlight_card_id;
+                    wasm_bindgen_futures::spawn_local(async move {
+                        gloo_timers::future::TimeoutFuture::new(1500).await;
+                        if highlight_sig.with_untracked(|h| h.as_deref() == Some(card_id.as_str())) {
+                            highlight_sig.set(None);
+                        }
+                    });
+                }
+            }
+        }
+
+        BoardEvent::CardArchived { board_seq, client_id, card_id } => {
+            signals.last_seen_seq.set(board_seq);
+
+            let is_remote = client_id.as_str() != own_client_id || own_client_id.is_empty();
+
+            if is_remote {
+                // D-06: insert into fading_card_ids, wait 350ms for CSS animation, then remove
+                signals.fading_card_ids.update(|fids| { fids.insert(card_id.clone()); });
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let fading_sig = signals.fading_card_ids;
+                    let list_cards_sig = signals.list_cards;
+                    let card_signals_sig = signals.card_signals;
+                    let cid = card_id.clone();
+                    wasm_bindgen_futures::spawn_local(async move {
+                        gloo_timers::future::TimeoutFuture::new(350).await;
+                        // Remove from fading set
+                        fading_sig.update(|fids| { fids.remove(&cid); });
+                        // Remove from list_cards and card_signals
+                        list_cards_sig.update(|lc| {
+                            for ids in lc.values_mut() {
+                                ids.retain(|id| id != &cid);
+                            }
+                        });
+                        card_signals_sig.update(|cs| { cs.remove(&cid); });
+                    });
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    // SSR/test: remove immediately without animation
+                    signals.fading_card_ids.update(|fids| { fids.remove(&card_id); });
+                    signals.list_cards.update(|lc| {
+                        for ids in lc.values_mut() {
+                            ids.retain(|id| id != &card_id);
+                        }
+                    });
+                    signals.card_signals.update(|cs| { cs.remove(&card_id); });
+                }
+            }
+            // Own archive is handled by sidebar.rs dispatch Effect — no action needed here.
+        }
+
+        BoardEvent::CommentAdded { board_seq, client_id, card_id, .. } => {
+            signals.last_seen_seq.set(board_seq);
+            // Increment comment_count on the card thumbnail
+            let card_sig = signals.card_signals.with(|cs| cs.get(&card_id).copied());
+            if let Some(sig) = card_sig {
+                sig.update(|c| c.comment_count += 1);
+            }
+            // Flash for remote
+            let is_remote = client_id.as_str() != own_client_id || own_client_id.is_empty();
+            if is_remote {
+                signals.highlight_card_id.set(Some(card_id.clone()));
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let highlight_sig = signals.highlight_card_id;
+                    wasm_bindgen_futures::spawn_local(async move {
+                        gloo_timers::future::TimeoutFuture::new(1500).await;
+                        if highlight_sig.with_untracked(|h| h.as_deref() == Some(card_id.as_str())) {
+                            highlight_sig.set(None);
+                        }
+                    });
+                }
+            }
+        }
+
+        BoardEvent::ChecklistUpdated { board_seq, client_id: _, card_id, checklist_done, checklist_total } => {
+            signals.last_seen_seq.set(board_seq);
+            let card_sig = signals.card_signals.with(|cs| cs.get(&card_id).copied());
+            if let Some(sig) = card_sig {
+                sig.update(|c| {
+                    c.checklist_done = checklist_done;
+                    c.checklist_total = checklist_total;
+                });
+            }
+        }
+
+        BoardEvent::LabelChanged { board_seq, client_id: _, card_id, labels } => {
+            signals.last_seen_seq.set(board_seq);
+            let card_sig = signals.card_signals.with(|cs| cs.get(&card_id).copied());
+            if let Some(sig) = card_sig {
+                sig.update(|c| c.labels = labels);
+            }
+        }
+
+        BoardEvent::PriorityChanged { board_seq, client_id: _, card_id, priority } => {
+            signals.last_seen_seq.set(board_seq);
+            let card_sig = signals.card_signals.with(|cs| cs.get(&card_id).copied());
+            if let Some(sig) = card_sig {
+                sig.update(|c| c.priority = priority);
+            }
+        }
+
+        BoardEvent::DueDateChanged { board_seq, client_id: _, card_id, due_at } => {
+            signals.last_seen_seq.set(board_seq);
+            let card_sig = signals.card_signals.with(|cs| cs.get(&card_id).copied());
+            if let Some(sig) = card_sig {
+                sig.update(|c| c.due_at = due_at);
+            }
+        }
+
+        BoardEvent::MemberChanged { board_seq, client_id: _, card_id, member_ids } => {
+            signals.last_seen_seq.set(board_seq);
+            let card_sig = signals.card_signals.with(|cs| cs.get(&card_id).copied());
+            if let Some(sig) = card_sig {
+                sig.update(|c| c.member_ids = member_ids);
+            }
+        }
+
+        BoardEvent::AttachmentAdded { board_seq, client_id: _, card_id, .. } => {
+            signals.last_seen_seq.set(board_seq);
+            let card_sig = signals.card_signals.with(|cs| cs.get(&card_id).copied());
+            if let Some(sig) = card_sig {
+                sig.update(|c| c.attachment_count += 1);
+            }
+        }
+
+        BoardEvent::AttachmentRemoved { board_seq, client_id: _, card_id, .. } => {
+            signals.last_seen_seq.set(board_seq);
+            let card_sig = signals.card_signals.with(|cs| cs.get(&card_id).copied());
+            if let Some(sig) = card_sig {
+                sig.update(|c| c.attachment_count = (c.attachment_count - 1).max(0));
+            }
+        }
+
+        BoardEvent::CardMovedCrossBoard { board_seq, client_id: _, card_id } => {
+            signals.last_seen_seq.set(board_seq);
+            // Card left this board — remove from list_cards and card_signals
+            signals.list_cards.update(|lc| {
+                for ids in lc.values_mut() {
+                    ids.retain(|id| id != &card_id);
+                }
+            });
+            signals.card_signals.update(|cs| { cs.remove(&card_id); });
+        }
+
+        // List mutations: BoardPage still uses server action refetch for list-level changes.
+        // WS events update last_seen_seq for gap detection; UI refreshes via refetch.
+        BoardEvent::ListAdded { board_seq, .. } => { signals.last_seen_seq.set(board_seq); }
+        BoardEvent::ListRenamed { board_seq, .. } => { signals.last_seen_seq.set(board_seq); }
+        BoardEvent::ListReordered { board_seq, .. } => { signals.last_seen_seq.set(board_seq); }
+        BoardEvent::ListArchived { board_seq, .. } => { signals.last_seen_seq.set(board_seq); }
+
         BoardEvent::Refresh => {
             // 06-03: trigger board_data.refetch() via a signal
             // Stub: no-op for now
         }
-
-        // All other variants are no-ops in 06-01; later plans add handling.
-        _ => {}
     }
 }
 
