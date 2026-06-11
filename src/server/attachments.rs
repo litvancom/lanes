@@ -161,6 +161,11 @@ pub async fn upload_attachment_handler(
     let storage_key = format!("{}/{}{}", card_id, uuid_key, ext);
     let store_path = StorePath::from(storage_key.as_str());
 
+    // Use the actually-buffered byte count as the single source of truth for the
+    // stored size (CR-03), rather than the multipart-chunk counter, so the DB size
+    // can never silently diverge from the persisted object.
+    let stored_size = bytes.len() as i64;
+
     // 6. Persist bytes via object_store (T-05-18: path is server-controlled)
     let payload = object_store::PutPayload::from(bytes);
     if let Err(e) = state.storage.put(&store_path, payload).await {
@@ -182,7 +187,7 @@ pub async fn upload_attachment_handler(
         &user.id,
         &file_name_display,
         &download_url,
-        total_size as i64,
+        stored_size,
     )
     .await
     {

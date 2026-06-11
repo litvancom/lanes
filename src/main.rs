@@ -166,11 +166,15 @@ async fn start_server() {
     let app = Router::new()
         // Attachment upload/download routes (plain Axum — not Leptos server fns, DETAIL-08).
         // Must be registered BEFORE .layer(auth_layer) so the session/auth layer wraps them.
-        // Route-specific body limit: 10 MB for uploads (T-05-19).
+        // Route-specific body limit for uploads (T-05-19, CR-03).
+        // The handler enforces a 10 MB limit on the *file content*; this body limit
+        // is set slightly higher (11 MB) to leave room for multipart boundaries and
+        // headers, so a legitimate ~10 MB file is not rejected by Axum's whole-body
+        // limit before the handler's friendlier 10 MB message can run.
         .route(
             "/api/attachments/{board_id}/{card_id}",
             axum::routing::post(upload_attachment_handler)
-                .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)),
+                .layer(axum::extract::DefaultBodyLimit::max(11 * 1024 * 1024)),
         )
         .route(
             "/api/attachments/{board_id}/{card_id}/{key}",
