@@ -7,8 +7,14 @@ use crate::routes::board::DragInfo;
 /// Accepts #rrggbb, #rgb, and oklch(...) shapes. Falls back to transparent/neutral.
 fn safe_cover_color(c: &str) -> &str {
     let s = c.trim();
-    if s.starts_with("oklch(") && s.ends_with(')') {
-        return c;
+    // Accept oklch(...) only if the interior is restricted to a numeric charset.
+    // An unconstrained interior would still allow CSS-declaration injection inside the
+    // style attribute (e.g. closing the function and appending @import) even though
+    // Leptos escapes the attribute itself (WR-01).
+    if let Some(inner) = s.strip_prefix("oklch(").and_then(|x| x.strip_suffix(')')) {
+        if inner.chars().all(|ch| ch.is_ascii_digit() || matches!(ch, '.' | '%' | ' ' | '+' | '-')) {
+            return c;
+        }
     }
     if s.starts_with('#') && (s.len() == 7 || s.len() == 4)
         && s[1..].chars().all(|ch| ch.is_ascii_hexdigit())
@@ -69,22 +75,34 @@ pub fn format_due(due_at_ms: i64) -> (String, &'static str) {
         ""
     };
 
-    // Format as "Mon DD" using simple epoch math
-    // We use chrono-free formatting: just compute day/month from millis
-    let secs = due_at_ms / 1000;
-    let days_since_epoch = secs / 86400;
+    // Format as "Mon DD" using simple epoch math.
+    // We use chrono-free formatting: just compute day/month from millis.
+    // Floor-divide so pre-epoch (negative) inputs map to the correct day rather than
+    // truncating toward zero.
+    let secs = due_at_ms.div_euclid(1000);
+    let days_since_epoch = secs.div_euclid(86400);
 
     // Simple Gregorian calendar calculation
-    let label = epoch_days_to_mon_day(days_since_epoch as u64);
+    let label = epoch_days_to_mon_day(days_since_epoch);
 
     (label, tone)
 }
 
 /// Convert days since Unix epoch (1970-01-01) to "Mon DD" format (e.g. "May 20").
-fn epoch_days_to_mon_day(days: u64) -> String {
+///
+/// Operates on signed `i64` arithmetic so malformed/pre-epoch inputs cannot underflow
+/// and panic in debug builds (WR-03). The Julian Day Number offset (2440588) keeps the
+/// intermediates positive for any realistic due date; the month index is bounds-checked
+/// before indexing MONTHS.
+fn epoch_days_to_mon_day(days: i64) -> String {
     // Algorithm: compute year/month/day from Julian day number
     // Days since epoch = days since 1970-01-01
     let jdn = days + 2440588; // Julian Day Number offset from 1970-01-01
+    if jdn < 0 {
+        // Far-pre-epoch / garbage input: the Meeus algorithm assumes a non-negative
+        // Julian day. Bail out with a placeholder rather than computing nonsense.
+        return "?".to_string();
+    }
 
     // Gregorian calendar algorithm (Meeus, Astronomical Algorithms)
     let p = jdn + 68569;
@@ -102,7 +120,11 @@ fn epoch_days_to_mon_day(days: u64) -> String {
         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
 
-    let month_name = if month as usize <= 12 { MONTHS[month as usize] } else { "?" };
+    let month_name = if (1..=12).contains(&month) {
+        MONTHS[month as usize]
+    } else {
+        "?"
+    };
     format!("{} {}", month_name, day)
 }
 
@@ -224,7 +246,12 @@ pub fn KanbanCard(
                         !c.done && c.due_at.is_some()
                     }>
                         {move || {
-                            let due_ms = card.get().due_at.unwrap_or(0);
+                            // Bind due_at once; if a concurrent mutation cleared it,
+                            // render nothing rather than falling back to epoch 0 which
+                            // would show a misleading "Jan 1" overdue label (WR-07).
+                            let Some(due_ms) = card.get().due_at else {
+                                return ().into_any();
+                            };
                             let (label, tone) = format_due(due_ms);
                             let cls = if tone.is_empty() {
                                 "lns-card-meta-item".to_string()
@@ -236,7 +263,7 @@ pub fn KanbanCard(
                                     <crate::components::icon::Icon name="clock"/>
                                     {label}
                                 </span>
-                            }
+                            }.into_any()
                         }}
                     </Show>
 

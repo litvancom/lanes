@@ -6,9 +6,14 @@ use crate::models::CardLabel;
 /// Returns a safe neutral color on any invalid input.
 fn safe_color(color: &str) -> &str {
     let c = color.trim();
-    // Accept oklch(...) shape
-    if c.starts_with("oklch(") && c.ends_with(')') {
-        return color;
+    // Accept oklch(...) only if the interior is restricted to a numeric charset.
+    // An unconstrained interior allows CSS-declaration injection inside the style
+    // attribute (e.g. closing the function and appending @import) even though Leptos
+    // escapes the attribute itself (WR-01).
+    if let Some(inner) = c.strip_prefix("oklch(").and_then(|x| x.strip_suffix(')')) {
+        if inner.chars().all(|ch| ch.is_ascii_digit() || matches!(ch, '.' | '%' | ' ' | '+' | '-')) {
+            return color;
+        }
     }
     // Accept #rrggbb (7 chars) or #rgb (4 chars)
     if c.starts_with('#') && (c.len() == 7 || c.len() == 4)
