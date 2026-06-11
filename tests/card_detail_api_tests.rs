@@ -572,6 +572,165 @@ mod card_detail_api_tests {
         assert!(stored_prio.is_none(), "priority must be NULL after set_priority_inner(None)");
     }
 
+    // -------------------------------------------------------------------------
+    // Comment + mention tests (Task 1 of Plan 04 — RED phase)
+    // -------------------------------------------------------------------------
+
+    /// add_comment_inner bumps cards.comment_count and inserts a watchers row for the author.
+    #[tokio::test]
+    async fn test_add_comment_increments_count_and_auto_watches() {
+        use lanes::api::card_detail_api::add_comment_inner;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        let author_id = insert_user_direct(&write_pool, "comment_author@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Comment Count Board").await;
+        insert_member_direct(&write_pool, &board_id, &author_id, "owner").await;
+        let list_id = insert_list_direct(&write_pool, &board_id, "Comment List").await;
+        let card_id = insert_card_direct(&write_pool, &board_id, &list_id, "Comment Card", 1).await;
+
+        // comment_count starts at 0
+        let count_before: i64 = sqlx::query_scalar("SELECT comment_count FROM cards WHERE id=?")
+            .bind(&card_id)
+            .fetch_one(&write_pool)
+            .await
+            .expect("fetch initial count");
+        assert_eq!(count_before, 0, "initial comment_count must be 0");
+
+        let result = add_comment_inner(
+            &write_pool,
+            &board_id,
+            &card_id,
+            &author_id,
+            "Hello, world!".to_string(),
+            vec![],
+        ).await;
+        assert!(result.is_ok(), "add_comment_inner must succeed: {:?}", result.err());
+        let entry = result.unwrap();
+        assert_eq!(entry.entry_type, "comment", "returned entry_type must be 'comment'");
+        assert_eq!(entry.text, "Hello, world!", "returned text must match body");
+
+        // comment_count must have been bumped to 1
+        let count_after: i64 = sqlx::query_scalar("SELECT comment_count FROM cards WHERE id=?")
+            .bind(&card_id)
+            .fetch_one(&write_pool)
+            .await
+            .expect("fetch count after comment");
+        assert_eq!(count_after, 1, "comment_count must be 1 after posting a comment");
+
+        // Author must be in watchers (D-12 auto-watch)
+        let watcher_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM watchers WHERE card_id=? AND user_id=?")
+                .bind(&card_id)
+                .bind(&author_id)
+                .fetch_one(&write_pool)
+                .await
+                .expect("watchers count");
+        assert_eq!(watcher_count, 1, "author must be auto-watched after commenting (D-12)");
+
+        // Empty body must be rejected
+        let result_empty = add_comment_inner(
+            &write_pool,
+            &board_id,
+            &card_id,
+            &author_id,
+            "   ".to_string(),
+            vec![],
+        ).await;
+        assert!(result_empty.is_err(), "empty comment body must be rejected");
+    }
+
+    /// mention of another board member creates a notification; self-mention is suppressed.
+    #[tokio::test]
+    async fn test_mention_creates_notification_skips_self() {
+        use lanes::api::card_detail_api::add_comment_inner;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        let author_id = insert_user_direct(&write_pool, "mention_author@test.com").await;
+        let other_id = insert_user_direct(&write_pool, "mention_other@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Mention Board").await;
+        insert_member_direct(&write_pool, &board_id, &author_id, "owner").await;
+        insert_member_direct(&write_pool, &board_id, &other_id, "member").await;
+        let list_id = insert_list_direct(&write_pool, &board_id, "Mention List").await;
+        let card_id = insert_card_direct(&write_pool, &board_id, &list_id, "Mention Card", 1).await;
+
+        // Mention another board member → 1 notification row
+        let result = add_comment_inner(
+            &write_pool,
+            &board_id,
+            &card_id,
+            &author_id,
+            "@other hello".to_string(),
+            vec![other_id.clone()],
+        ).await;
+        assert!(result.is_ok(), "add_comment with mention must succeed: {:?}", result.err());
+
+        let notif_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM notifications WHERE user_id=? AND card_id=? AND kind='mention'")
+                .bind(&other_id)
+                .bind(&card_id)
+                .fetch_one(&write_pool)
+                .await
+                .expect("notifications count");
+        assert_eq!(notif_count, 1, "mentioning another board member must create 1 notification row");
+
+        // Self-mention: author_id in mention_user_ids → 0 notifications for self
+        let result2 = add_comment_inner(
+            &write_pool,
+            &board_id,
+            &card_id,
+            &author_id,
+            "@me again".to_string(),
+            vec![author_id.clone()],
+        ).await;
+        assert!(result2.is_ok(), "self-mention comment must succeed");
+
+        let self_notif: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM notifications WHERE user_id=? AND card_id=? AND kind='mention'")
+                .bind(&author_id)
+                .bind(&card_id)
+                .fetch_one(&write_pool)
+                .await
+                .expect("self notif count");
+        assert_eq!(self_notif, 0, "self-mention must NOT create a notification row (D-11)");
+    }
+
+    /// mention_user_id that is not a board member produces no notification row.
+    #[tokio::test]
+    async fn test_mention_non_member_no_notification() {
+        use lanes::api::card_detail_api::add_comment_inner;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        let author_id = insert_user_direct(&write_pool, "nonmember_author@test.com").await;
+        let outsider_id = insert_user_direct(&write_pool, "outsider@test.com").await;
+        // outsider is a user but NOT a board member
+        let board_id = insert_board_direct(&write_pool, "Nonmember Board").await;
+        insert_member_direct(&write_pool, &board_id, &author_id, "owner").await;
+        let list_id = insert_list_direct(&write_pool, &board_id, "NM List").await;
+        let card_id = insert_card_direct(&write_pool, &board_id, &list_id, "NM Card", 1).await;
+
+        let result = add_comment_inner(
+            &write_pool,
+            &board_id,
+            &card_id,
+            &author_id,
+            "@outsider hello".to_string(),
+            vec![outsider_id.clone()],
+        ).await;
+        assert!(result.is_ok(), "comment with non-member mention must succeed (just no notification)");
+
+        let notif_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM notifications WHERE user_id=? AND card_id=?")
+                .bind(&outsider_id)
+                .bind(&card_id)
+                .fetch_one(&write_pool)
+                .await
+                .expect("outsider notif count");
+        assert_eq!(notif_count, 0, "non-board-member must NOT receive a notification (T-05-14)");
+    }
+
     /// assign_member_inner inserts card_members AND watchers rows in the same transaction.
     #[tokio::test]
     async fn test_assign_member_auto_watches() {
