@@ -1199,6 +1199,21 @@ pub async fn move_card_cross_board_inner(
         _ => {}
     }
 
+    // 1b. Verify the card actually belongs to from_board_id BEFORE any other write
+    // (CR-01/CR-02): bind card_id to from_board_id so a cross-board / non-existent
+    // card_id cannot burn a card number, strip labels/members, or log a spurious
+    // 'moved' event on a card the caller does not own on the source board.
+    let card_on_from: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM cards WHERE id = ? AND board_id = ?",
+    )
+    .bind(card_id)
+    .bind(from_board_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if card_on_from.is_none() {
+        return Err(sqlx::Error::Decode("card not on source board".into()));
+    }
+
     // 2. Allocate a new card_num on to_board_id (mirrors create_card_inner — WR-02)
     let new_card_num: i64 = sqlx::query_scalar(
         "UPDATE boards SET next_card_num = next_card_num + 1 WHERE id = ? RETURNING next_card_num - 1"
@@ -1208,7 +1223,7 @@ pub async fn move_card_cross_board_inner(
     .await?;
 
     // 3. UPDATE the card (scoped by id AND from_board_id — T-05-25)
-    sqlx::query(
+    let card_update = sqlx::query(
         "UPDATE cards SET board_id = ?, list_id = ?, card_num = ?, position = ?, updated_at = ? WHERE id = ? AND board_id = ?"
     )
     .bind(to_board_id)
@@ -1220,6 +1235,11 @@ pub async fn move_card_cross_board_inner(
     .bind(from_board_id)
     .execute(&mut *tx)
     .await?;
+    // Abort (rolling back the tx, including the card_num allocation) if the card
+    // is not on from_board_id (CR-01/CR-02). Belt-and-braces with the pre-check above.
+    if card_update.rows_affected() == 0 {
+        return Err(sqlx::Error::Decode("card not on source board".into()));
+    }
 
     // 4. DELETE all card_labels (board-scoped labels cannot carry — D-05, T-05-24)
     sqlx::query("DELETE FROM card_labels WHERE card_id = ?")
