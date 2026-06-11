@@ -459,4 +459,157 @@ mod card_detail_api_tests {
             "card_num must match the seeded value"
         );
     }
+
+    // -------------------------------------------------------------------------
+    // Property mutation tests (Task 2 — RED phase)
+    // -------------------------------------------------------------------------
+
+    /// Helper: insert a label directly.
+    async fn insert_label_direct(pool: &sqlx::SqlitePool, board_id: &str, name: &str) -> String {
+        use uuid::Uuid;
+        let id = Uuid::now_v7().to_string();
+        sqlx::query!(
+            "INSERT INTO labels (id, board_id, name, color) VALUES (?, ?, ?, 'oklch(72% 0.10 25)')",
+            id, board_id, name
+        )
+        .execute(pool)
+        .await
+        .expect("insert label");
+        id
+    }
+
+    /// assign_label_inner rejects labels that don't belong to the card's board (cross-board injection).
+    #[tokio::test]
+    async fn test_assign_label_is_board_scoped() {
+        use lanes::api::card_detail_api::assign_label_inner;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        let user_id = insert_user_direct(&write_pool, "label_scoped@test.com").await;
+        let board_a = insert_board_direct(&write_pool, "Board A").await;
+        let board_b = insert_board_direct(&write_pool, "Board B").await;
+        insert_member_direct(&write_pool, &board_a, &user_id, "owner").await;
+        let list_id = insert_list_direct(&write_pool, &board_a, "List A").await;
+        let card_id = insert_card_direct(&write_pool, &board_a, &list_id, "Label Card", 1).await;
+
+        let label_b = insert_label_direct(&write_pool, &board_b, "Board B Label").await;
+        let label_a = insert_label_direct(&write_pool, &board_a, "Board A Label").await;
+
+        // Cross-board: label_b belongs to board_b, not board_a — must NOT insert
+        let result = assign_label_inner(&write_pool, &board_a, &card_id, &label_b, true).await;
+        // assign_label_inner returns Ok(()) with no row inserted (verified below) OR returns Err
+        let count_b: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM card_labels WHERE card_id=? AND label_id=?")
+                .bind(&card_id).bind(&label_b)
+                .fetch_one(&write_pool).await.expect("count b");
+        assert_eq!(count_b, 0, "cross-board label must not be assigned (T-05-08)");
+        // We accept either Ok(()) (silently skipped) or Err — both are correct security behaviors
+        let _ = result;
+
+        // Same-board: label_a belongs to board_a — must insert
+        let result_ok = assign_label_inner(&write_pool, &board_a, &card_id, &label_a, true).await;
+        assert!(result_ok.is_ok(), "same-board label assign must succeed: {:?}", result_ok.err());
+
+        let count_a: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM card_labels WHERE card_id=? AND label_id=?")
+                .bind(&card_id).bind(&label_a)
+                .fetch_one(&write_pool).await.expect("count a");
+        assert_eq!(count_a, 1, "same-board label must be assigned");
+
+        // Idempotent re-assign (INSERT OR IGNORE — no duplicate PK error)
+        let result_dupe = assign_label_inner(&write_pool, &board_a, &card_id, &label_a, true).await;
+        assert!(result_dupe.is_ok(), "duplicate assign must not error (INSERT OR IGNORE)");
+
+        let count_dupe: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM card_labels WHERE card_id=? AND label_id=?")
+                .bind(&card_id).bind(&label_a)
+                .fetch_one(&write_pool).await.expect("count dupe");
+        assert_eq!(count_dupe, 1, "duplicate assign must not create duplicate row");
+
+        // Unassign
+        let result_unassign = assign_label_inner(&write_pool, &board_a, &card_id, &label_a, false).await;
+        assert!(result_unassign.is_ok(), "unassign must succeed");
+        let count_after: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM card_labels WHERE card_id=? AND label_id=?")
+                .bind(&card_id).bind(&label_a)
+                .fetch_one(&write_pool).await.expect("count after unassign");
+        assert_eq!(count_after, 0, "label must be removed after unassign");
+    }
+
+    /// set_priority_inner rejects values not in P1/P2/P3/None.
+    #[tokio::test]
+    async fn test_set_priority_rejects_invalid() {
+        use lanes::api::card_detail_api::set_priority_inner;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        let user_id = insert_user_direct(&write_pool, "priority@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Priority Board").await;
+        insert_member_direct(&write_pool, &board_id, &user_id, "owner").await;
+        let list_id = insert_list_direct(&write_pool, &board_id, "Prio List").await;
+        let card_id = insert_card_direct(&write_pool, &board_id, &list_id, "Prio Card", 1).await;
+
+        // Valid values
+        for prio in &[Some("P1"), Some("P2"), Some("P3"), None] {
+            let result = set_priority_inner(&write_pool, &board_id, &card_id, prio.map(|s| s.to_string())).await;
+            assert!(result.is_ok(), "valid priority {:?} must succeed: {:?}", prio, result.err());
+        }
+
+        // Invalid values
+        for bad in &["p1", "HIGH", "P4", "P0", "urgent", ""] {
+            let result = set_priority_inner(&write_pool, &board_id, &card_id, Some(bad.to_string())).await;
+            assert!(result.is_err(), "invalid priority {:?} must be rejected", bad);
+        }
+
+        // Verify DB stores None correctly
+        let _ = set_priority_inner(&write_pool, &board_id, &card_id, None).await;
+        let stored_prio: Option<String> =
+            sqlx::query_scalar("SELECT priority FROM cards WHERE id=?")
+                .bind(&card_id)
+                .fetch_one(&write_pool)
+                .await
+                .expect("fetch priority");
+        assert!(stored_prio.is_none(), "priority must be NULL after set_priority_inner(None)");
+    }
+
+    /// assign_member_inner inserts card_members AND watchers rows in the same transaction.
+    #[tokio::test]
+    async fn test_assign_member_auto_watches() {
+        use lanes::api::card_detail_api::assign_member_inner;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        let owner_id = insert_user_direct(&write_pool, "assign_owner@test.com").await;
+        let member_id = insert_user_direct(&write_pool, "assign_member@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Assign Board").await;
+        insert_member_direct(&write_pool, &board_id, &owner_id, "owner").await;
+        insert_member_direct(&write_pool, &board_id, &member_id, "member").await;
+        let list_id = insert_list_direct(&write_pool, &board_id, "Assign List").await;
+        let card_id = insert_card_direct(&write_pool, &board_id, &list_id, "Assign Card", 1).await;
+
+        // Assign member (who is a board member) — should insert both card_members AND watchers
+        let result = assign_member_inner(&write_pool, &board_id, &card_id, &member_id).await;
+        assert!(result.is_ok(), "assign_member must succeed: {:?}", result.err());
+
+        let cm_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM card_members WHERE card_id=? AND user_id=?")
+                .bind(&card_id).bind(&member_id)
+                .fetch_one(&write_pool).await.expect("card_members count");
+        assert_eq!(cm_count, 1, "card_members row must be inserted");
+
+        let watcher_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM watchers WHERE card_id=? AND user_id=?")
+                .bind(&card_id).bind(&member_id)
+                .fetch_one(&write_pool).await.expect("watchers count");
+        assert_eq!(watcher_count, 1, "watchers row must be inserted (auto-watch D-12)");
+
+        // Idempotent: assign again — no duplicate PK error
+        let result2 = assign_member_inner(&write_pool, &board_id, &card_id, &member_id).await;
+        assert!(result2.is_ok(), "duplicate assign must not error (INSERT OR IGNORE)");
+
+        // Non-board-member: should fail
+        let outsider_id = insert_user_direct(&write_pool, "outsider@test.com").await;
+        let result_out = assign_member_inner(&write_pool, &board_id, &card_id, &outsider_id).await;
+        assert!(result_out.is_err(), "non-board-member assign must be rejected (T-05-09)");
+    }
 }

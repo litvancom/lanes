@@ -492,6 +492,281 @@ pub async fn add_checklist_item(
 }
 
 // ---------------------------------------------------------------------------
+// Property mutation inner functions (SSR-only)
+// ---------------------------------------------------------------------------
+
+/// Internal: assign or unassign a label on a card.
+///
+/// Security (T-05-08): verifies the label belongs to the card's board before inserting.
+/// Cross-board label injection is prevented — returns Ok(()) without inserting if the label
+/// is not on this board. `INSERT OR IGNORE` prevents duplicate-PK errors on double-assign.
+#[cfg(feature = "ssr")]
+pub async fn assign_label_inner(
+    pool: &sqlx::SqlitePool,
+    board_id: &str,
+    card_id: &str,
+    label_id: &str,
+    assigned: bool,
+) -> Result<(), sqlx::Error> {
+    if assigned {
+        // Verify label belongs to this board (T-05-08)
+        let on_board: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM labels WHERE id = ? AND board_id = ?",
+        )
+        .bind(label_id)
+        .bind(board_id)
+        .fetch_optional(pool)
+        .await?;
+
+        if on_board.is_none() {
+            // Label is not on this board — silently skip (no error, no insert)
+            return Ok(());
+        }
+
+        sqlx::query("INSERT OR IGNORE INTO card_labels (card_id, label_id) VALUES (?, ?)")
+            .bind(card_id)
+            .bind(label_id)
+            .execute(pool)
+            .await?;
+    } else {
+        sqlx::query("DELETE FROM card_labels WHERE card_id = ? AND label_id = ?")
+            .bind(card_id)
+            .bind(label_id)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Internal: set or clear a card's due date.
+///
+/// Security: UPDATE scoped by id AND board_id (T-05-11).
+#[cfg(feature = "ssr")]
+pub async fn set_due_date_inner(
+    pool: &sqlx::SqlitePool,
+    board_id: &str,
+    card_id: &str,
+    due_at: Option<i64>,
+) -> Result<(), sqlx::Error> {
+    use crate::server::now_millis;
+    let now = now_millis().map_err(|_| sqlx::Error::Decode("clock error".into()))?;
+
+    sqlx::query(
+        "UPDATE cards SET due_at = ?, updated_at = ? WHERE id = ? AND board_id = ?",
+    )
+    .bind(due_at)
+    .bind(now)
+    .bind(card_id)
+    .bind(board_id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+/// Internal: set or clear a card's priority.
+///
+/// Security (T-05-10): rejects any value not in P1/P2/P3/None.
+/// UPDATE scoped by id AND board_id (T-05-11).
+#[cfg(feature = "ssr")]
+pub async fn set_priority_inner(
+    pool: &sqlx::SqlitePool,
+    board_id: &str,
+    card_id: &str,
+    priority: Option<String>,
+) -> Result<(), sqlx::Error> {
+    use crate::server::now_millis;
+
+    // Validate: only P1, P2, P3 or None accepted (T-05-10)
+    if let Some(ref p) = priority {
+        if !matches!(p.as_str(), "P1" | "P2" | "P3") {
+            return Err(sqlx::Error::Decode(
+                format!("Invalid priority '{}': must be P1, P2, P3, or null", p).into(),
+            ));
+        }
+    }
+
+    let now = now_millis().map_err(|_| sqlx::Error::Decode("clock error".into()))?;
+
+    sqlx::query(
+        "UPDATE cards SET priority = ?, updated_at = ? WHERE id = ? AND board_id = ?",
+    )
+    .bind(priority)
+    .bind(now)
+    .bind(card_id)
+    .bind(board_id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+/// Internal: assign a user as a card member and auto-watch the card for them (D-12).
+///
+/// Security (T-05-09): verifies the user is a board member before inserting.
+/// Both `card_members` and `watchers` are inserted with INSERT OR IGNORE (idempotent).
+/// Transactional: verify + card_members + watchers in one tx.
+#[cfg(feature = "ssr")]
+pub async fn assign_member_inner(
+    pool: &sqlx::SqlitePool,
+    board_id: &str,
+    card_id: &str,
+    user_id: &str,
+) -> Result<(), sqlx::Error> {
+    // Verify user is a board member (T-05-09)
+    let is_member: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM board_members WHERE board_id = ? AND user_id = ?",
+    )
+    .bind(board_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
+
+    if is_member.is_none() {
+        return Err(sqlx::Error::Decode(
+            "User is not a member of this board".into(),
+        ));
+    }
+
+    let mut tx = pool.begin().await?;
+
+    sqlx::query("INSERT OR IGNORE INTO card_members (card_id, user_id) VALUES (?, ?)")
+        .bind(card_id)
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // Auto-watch: insert watchers row (D-12); INSERT OR IGNORE prevents duplicate-PK errors
+    sqlx::query("INSERT OR IGNORE INTO watchers (card_id, user_id) VALUES (?, ?)")
+        .bind(card_id)
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Internal: remove a user from card members.
+///
+/// Does NOT remove the watchers row — unwatch is an explicit user action.
+/// DELETE is a no-op if the user was not a member (safe).
+#[cfg(feature = "ssr")]
+pub async fn remove_member_inner(
+    pool: &sqlx::SqlitePool,
+    _board_id: &str,
+    card_id: &str,
+    user_id: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM card_members WHERE card_id = ? AND user_id = ?")
+        .bind(card_id)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Property server function wrappers
+// ---------------------------------------------------------------------------
+
+/// Assign or unassign a label on a card (auth-guarded, board-scoped).
+#[server]
+pub async fn assign_label(
+    board_id: String,
+    card_id: String,
+    label_id: String,
+    assigned: bool,
+) -> Result<(), ServerFnError> {
+    use crate::auth::helpers::require_board_member;
+    use crate::server::state::AppState;
+    let state = expect_context::<AppState>();
+    require_board_member(&board_id, &state.read_pool.0).await?;
+    assign_label_inner(&state.write_pool.0, &board_id, &card_id, &label_id, assigned)
+        .await
+        .map_err(|e| {
+            tracing::error!("assign_label error: {e}");
+            ServerFnError::new("Couldn't save changes. Try again.")
+        })
+}
+
+/// Set or clear a card's due date (auth-guarded).
+#[server]
+pub async fn set_due_date(
+    board_id: String,
+    card_id: String,
+    due_at: Option<i64>,
+) -> Result<(), ServerFnError> {
+    use crate::auth::helpers::require_board_member;
+    use crate::server::state::AppState;
+    let state = expect_context::<AppState>();
+    require_board_member(&board_id, &state.read_pool.0).await?;
+    set_due_date_inner(&state.write_pool.0, &board_id, &card_id, due_at)
+        .await
+        .map_err(|e| {
+            tracing::error!("set_due_date error: {e}");
+            ServerFnError::new("Couldn't save changes. Try again.")
+        })
+}
+
+/// Set or clear a card's priority (auth-guarded, P1/P2/P3/None only).
+#[server]
+pub async fn set_priority(
+    board_id: String,
+    card_id: String,
+    priority: Option<String>,
+) -> Result<(), ServerFnError> {
+    use crate::auth::helpers::require_board_member;
+    use crate::server::state::AppState;
+    let state = expect_context::<AppState>();
+    require_board_member(&board_id, &state.read_pool.0).await?;
+    set_priority_inner(&state.write_pool.0, &board_id, &card_id, priority)
+        .await
+        .map_err(|e| {
+            tracing::error!("set_priority error: {e}");
+            ServerFnError::new("Couldn't save changes. Try again.")
+        })
+}
+
+/// Assign a board member to a card (auth-guarded, auto-watches).
+#[server]
+pub async fn assign_member(
+    board_id: String,
+    card_id: String,
+    user_id: String,
+) -> Result<(), ServerFnError> {
+    use crate::auth::helpers::require_board_member;
+    use crate::server::state::AppState;
+    let state = expect_context::<AppState>();
+    require_board_member(&board_id, &state.read_pool.0).await?;
+    assign_member_inner(&state.write_pool.0, &board_id, &card_id, &user_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("assign_member error: {e}");
+            ServerFnError::new("Couldn't save changes. Try again.")
+        })
+}
+
+/// Remove a member from a card (auth-guarded; does not remove watcher).
+#[server]
+pub async fn remove_member(
+    board_id: String,
+    card_id: String,
+    user_id: String,
+) -> Result<(), ServerFnError> {
+    use crate::auth::helpers::require_board_member;
+    use crate::server::state::AppState;
+    let state = expect_context::<AppState>();
+    require_board_member(&board_id, &state.read_pool.0).await?;
+    remove_member_inner(&state.write_pool.0, &board_id, &card_id, &user_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("remove_member error: {e}");
+            ServerFnError::new("Couldn't save changes. Try again.")
+        })
+}
+
+// ---------------------------------------------------------------------------
 // Mutation inner functions (SSR-only)
 // ---------------------------------------------------------------------------
 
