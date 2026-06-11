@@ -46,6 +46,8 @@ mod schema_tests {
         "invites",
         "api_tokens",
         "watchers",
+        // card_events added by migration 005 (card-detail activity feed)
+        "card_events",
     ];
 
     #[tokio::test]
