@@ -145,6 +145,9 @@ pub fn KanbanList(
                 rename_action.dispatch(RenameList {
                     list_id: list_id_sv.get_value(),
                     name: trimmed,
+                    client_id: use_context::<crate::routes::board::BoardSignals>()
+                        .and_then(|bs| bs.own_client_id.get_untracked())
+                        .unwrap_or_default(),
                 });
             }
         }
@@ -178,6 +181,9 @@ pub fn KanbanList(
             reorder_action.dispatch(ReorderList {
                 list_id: list_id_sv.get_value(),
                 new_position,
+                client_id: use_context::<crate::routes::board::BoardSignals>()
+                    .and_then(|bs| bs.own_client_id.get_untracked())
+                    .unwrap_or_default(),
             });
         }
     };
@@ -209,6 +215,9 @@ pub fn KanbanList(
             reorder_action.dispatch(ReorderList {
                 list_id: list_id_sv.get_value(),
                 new_position,
+                client_id: use_context::<crate::routes::board::BoardSignals>()
+                    .and_then(|bs| bs.own_client_id.get_untracked())
+                    .unwrap_or_default(),
             });
         }
     };
@@ -835,6 +844,7 @@ pub fn AddCardComposer(
             board_id: board_id_val,
             list_id: list_id_val,
             title: trimmed,
+            client_id: board_signals.own_client_id.get_untracked().unwrap_or_default(),
         });
 
         error_msg.set(None);
@@ -958,6 +968,9 @@ pub fn AddListComposer(
             create_action.dispatch(CreateList {
                 board_id: board_id_sv.get_value(),
                 name: trimmed,
+                client_id: use_context::<crate::routes::board::BoardSignals>()
+                    .and_then(|bs| bs.own_client_id.get_untracked())
+                    .unwrap_or_default(),
             });
             input_value.set(String::new());
             composing.set(false);

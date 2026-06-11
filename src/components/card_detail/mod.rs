@@ -350,6 +350,7 @@ pub fn CardDetailModal(
                                                                             board_id: bid.clone(),
                                                                             card_id: cid.clone(),
                                                                             title: t.trim().to_string(),
+                                                                            client_id: board_signals.and_then(|bs| bs.own_client_id.get_untracked()).unwrap_or_default(),
                                                                         });
                                                                         editing_title.set(false);
                                                                     }
@@ -385,6 +386,7 @@ pub fn CardDetailModal(
                                                                     board_id: bid.clone(),
                                                                     card_id: cid.clone(),
                                                                     title: t.trim().to_string(),
+                                                                    client_id: board_signals.and_then(|bs| bs.own_client_id.get_untracked()).unwrap_or_default(),
                                                                 });
                                                                 editing_title.set(false);
                                                             }
@@ -539,6 +541,7 @@ pub fn CardDetailModal(
                                                                         board_id: board_id_sv.get_value(),
                                                                         card_id: card_id_sv.get_value(),
                                                                         description: desc_input.get_untracked(),
+                                                                        client_id: board_signals.and_then(|bs| bs.own_client_id.get_untracked()).unwrap_or_default(),
                                                                     });
                                                                     editing_desc.set(false);
                                                                     desc_changed.set(false);

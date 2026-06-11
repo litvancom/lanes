@@ -173,15 +173,19 @@ pub async fn move_card_inner(
 /// Enforces board membership (T-04-04). Validates title (T-04-05).
 /// Computes fractional position via next_card_position (CARD-04).
 /// Allocates card_num atomically from boards.next_card_num.
+///
+/// `client_id`: opaque per-connection UUID for D-05 self-echo suppression (T-6-03).
 #[server]
 pub async fn create_card(
     board_id: String,
     list_id: String,
     title: String,
+    client_id: String,
 ) -> Result<Card, ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::api::list_api::board_id_for_list;
     use crate::server::state::AppState;
+    use crate::models::events::{BoardEvent, CardSummary};
 
     let state = expect_context::<AppState>();
 
@@ -218,12 +222,38 @@ pub async fn create_card(
     })?;
 
     // Insert on write pool
-    create_card_inner(&state.write_pool.0, &board_id, &list_id, title, &position)
+    let card = create_card_inner(&state.write_pool.0, &board_id, &list_id, title, &position)
         .await
         .map_err(|e| {
             tracing::error!("create_card_inner error: {e}");
             ServerFnError::new("Failed to create card")
-        })
+        })?;
+
+    // Publish CardAdded after successful DB write (T-6-07: publish after ? propagation).
+    let seq = state.board_rooms.next_seq(&board_id);
+    state.board_rooms.publish(
+        &board_id,
+        BoardEvent::CardAdded {
+            board_seq: seq,
+            client_id,
+            card: CardSummary {
+                id: card.id.clone(),
+                list_id: card.list_id.clone(),
+                board_id: card.board_id.clone(),
+                card_num: card.card_num,
+                title: card.title.clone(),
+                position: card.position.clone(),
+                priority: card.priority.clone(),
+                due_at: card.due_at,
+                done: card.done,
+                cover: card.cover.clone(),
+                labels: card.labels.clone(),
+                member_ids: card.member_ids.clone(),
+            },
+        },
+    );
+
+    Ok(card)
 }
 
 /// Move a card to a different list and/or position.

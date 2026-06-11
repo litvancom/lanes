@@ -515,48 +515,84 @@ pub async fn add_checklist_item_inner(
 /// Toggle a checklist item's done state (auth-guarded, board-member-scoped).
 ///
 /// Returns (done, done_count, total_count) — client uses counts to update RwSignal<Card>.
+/// `client_id`: opaque per-connection UUID for D-05 self-echo suppression (T-6-03).
 #[server]
 pub async fn toggle_checklist_item(
     board_id: String,
     card_id: String,
     item_id: String,
     done: bool,
+    client_id: String,
 ) -> Result<(bool, i64, i64), ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
+    use crate::models::events::BoardEvent;
 
     let state = expect_context::<AppState>();
     require_board_member(&board_id, &state.read_pool.0).await?;
 
-    toggle_checklist_item_inner(&state.write_pool.0, &board_id, &card_id, &item_id, done)
+    let result = toggle_checklist_item_inner(&state.write_pool.0, &board_id, &card_id, &item_id, done)
         .await
         .map_err(|e| {
             tracing::error!("toggle_checklist_item error: {e}");
             ServerFnError::new("Couldn't save changes. Try again.")
-        })
+        })?;
+
+    // Publish ChecklistUpdated after successful DB write (T-6-07).
+    let seq = state.board_rooms.next_seq(&board_id);
+    state.board_rooms.publish(
+        &board_id,
+        BoardEvent::ChecklistUpdated {
+            board_seq: seq,
+            client_id,
+            card_id,
+            checklist_done: result.1,
+            checklist_total: result.2,
+        },
+    );
+
+    Ok(result)
 }
 
 /// Add a checklist item (creates checklist if none exists, auth-guarded).
 ///
 /// Returns (ChecklistItem, done_count, total_count).
+/// `client_id`: opaque per-connection UUID for D-05 self-echo suppression (T-6-03).
 #[server]
 pub async fn add_checklist_item(
     board_id: String,
     card_id: String,
     text: String,
+    client_id: String,
 ) -> Result<(crate::models::ChecklistItem, i64, i64), ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
+    use crate::models::events::BoardEvent;
 
     let state = expect_context::<AppState>();
     require_board_member(&board_id, &state.read_pool.0).await?;
 
-    add_checklist_item_inner(&state.write_pool.0, &board_id, &card_id, text)
+    let result = add_checklist_item_inner(&state.write_pool.0, &board_id, &card_id, text)
         .await
         .map_err(|e| {
             tracing::error!("add_checklist_item error: {e}");
             ServerFnError::new("Couldn't save changes. Try again.")
-        })
+        })?;
+
+    // Publish ChecklistUpdated after successful DB write (T-6-07).
+    let seq = state.board_rooms.next_seq(&board_id);
+    state.board_rooms.publish(
+        &board_id,
+        BoardEvent::ChecklistUpdated {
+            board_seq: seq,
+            client_id,
+            card_id,
+            checklist_done: result.1,
+            checklist_total: result.2,
+        },
+    );
+
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
@@ -767,15 +803,18 @@ pub async fn remove_member_inner(
 // ---------------------------------------------------------------------------
 
 /// Assign or unassign a label on a card (auth-guarded, board-scoped).
+/// `client_id`: opaque per-connection UUID for D-05 self-echo suppression (T-6-03).
 #[server]
 pub async fn assign_label(
     board_id: String,
     card_id: String,
     label_id: String,
     assigned: bool,
+    client_id: String,
 ) -> Result<(), ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
+    use crate::models::{events::BoardEvent, CardLabel};
     let state = expect_context::<AppState>();
     require_board_member(&board_id, &state.read_pool.0).await?;
     assign_label_inner(&state.write_pool.0, &board_id, &card_id, &label_id, assigned)
@@ -783,18 +822,45 @@ pub async fn assign_label(
         .map_err(|e| {
             tracing::error!("assign_label error: {e}");
             ServerFnError::new("Couldn't save changes. Try again.")
-        })
+        })?;
+
+    // Publish LabelChanged: fetch current labels for this card (T-6-07).
+    let labels: Vec<CardLabel> = sqlx::query_as(
+        r#"SELECT l.id, l.name, l.color
+           FROM card_labels cl
+           JOIN labels l ON l.id = cl.label_id
+           WHERE cl.card_id = ? AND l.board_id = ?"#,
+    )
+    .bind(&card_id)
+    .bind(&board_id)
+    .fetch_all(&state.read_pool.0)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|(id, name, color): (String, String, String)| CardLabel { id, name, color })
+    .collect();
+
+    let seq = state.board_rooms.next_seq(&board_id);
+    state.board_rooms.publish(
+        &board_id,
+        BoardEvent::LabelChanged { board_seq: seq, client_id, card_id, labels },
+    );
+
+    Ok(())
 }
 
 /// Set or clear a card's due date (auth-guarded).
+/// `client_id`: opaque per-connection UUID for D-05 self-echo suppression (T-6-03).
 #[server]
 pub async fn set_due_date(
     board_id: String,
     card_id: String,
     due_at: Option<i64>,
+    client_id: String,
 ) -> Result<(), ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
+    use crate::models::events::BoardEvent;
     let state = expect_context::<AppState>();
     require_board_member(&board_id, &state.read_pool.0).await?;
     set_due_date_inner(&state.write_pool.0, &board_id, &card_id, due_at)
@@ -802,37 +868,61 @@ pub async fn set_due_date(
         .map_err(|e| {
             tracing::error!("set_due_date error: {e}");
             ServerFnError::new("Couldn't save changes. Try again.")
-        })
+        })?;
+
+    // Publish DueDateChanged after successful DB write (T-6-07).
+    let seq = state.board_rooms.next_seq(&board_id);
+    state.board_rooms.publish(
+        &board_id,
+        BoardEvent::DueDateChanged { board_seq: seq, client_id, card_id, due_at },
+    );
+
+    Ok(())
 }
 
 /// Set or clear a card's priority (auth-guarded, P1/P2/P3/None only).
+/// `client_id`: opaque per-connection UUID for D-05 self-echo suppression (T-6-03).
 #[server]
 pub async fn set_priority(
     board_id: String,
     card_id: String,
     priority: Option<String>,
+    client_id: String,
 ) -> Result<(), ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
+    use crate::models::events::BoardEvent;
     let state = expect_context::<AppState>();
     require_board_member(&board_id, &state.read_pool.0).await?;
-    set_priority_inner(&state.write_pool.0, &board_id, &card_id, priority)
+    set_priority_inner(&state.write_pool.0, &board_id, &card_id, priority.clone())
         .await
         .map_err(|e| {
             tracing::error!("set_priority error: {e}");
             ServerFnError::new("Couldn't save changes. Try again.")
-        })
+        })?;
+
+    // Publish PriorityChanged after successful DB write (T-6-07).
+    let seq = state.board_rooms.next_seq(&board_id);
+    state.board_rooms.publish(
+        &board_id,
+        BoardEvent::PriorityChanged { board_seq: seq, client_id, card_id, priority },
+    );
+
+    Ok(())
 }
 
 /// Assign a board member to a card (auth-guarded, auto-watches).
+/// `client_id`: opaque per-connection UUID for D-05 self-echo suppression (T-6-03).
 #[server]
 pub async fn assign_member(
     board_id: String,
     card_id: String,
     user_id: String,
+    client_id: String,
 ) -> Result<(), ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
+    use crate::models::events::BoardEvent;
     let state = expect_context::<AppState>();
     require_board_member(&board_id, &state.read_pool.0).await?;
     assign_member_inner(&state.write_pool.0, &board_id, &card_id, &user_id)
@@ -840,18 +930,38 @@ pub async fn assign_member(
         .map_err(|e| {
             tracing::error!("assign_member error: {e}");
             ServerFnError::new("Couldn't save changes. Try again.")
-        })
+        })?;
+
+    // Publish MemberChanged with current member list (T-6-07).
+    let member_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT user_id FROM card_members WHERE card_id = ?",
+    )
+    .bind(&card_id)
+    .fetch_all(&state.read_pool.0)
+    .await
+    .unwrap_or_default();
+
+    let seq = state.board_rooms.next_seq(&board_id);
+    state.board_rooms.publish(
+        &board_id,
+        BoardEvent::MemberChanged { board_seq: seq, client_id, card_id, member_ids },
+    );
+
+    Ok(())
 }
 
 /// Remove a member from a card (auth-guarded; does not remove watcher).
+/// `client_id`: opaque per-connection UUID for D-05 self-echo suppression (T-6-03).
 #[server]
 pub async fn remove_member(
     board_id: String,
     card_id: String,
     user_id: String,
+    client_id: String,
 ) -> Result<(), ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
+    use crate::models::events::BoardEvent;
     let state = expect_context::<AppState>();
     require_board_member(&board_id, &state.read_pool.0).await?;
     remove_member_inner(&state.write_pool.0, &board_id, &card_id, &user_id)
@@ -859,7 +969,24 @@ pub async fn remove_member(
         .map_err(|e| {
             tracing::error!("remove_member error: {e}");
             ServerFnError::new("Couldn't save changes. Try again.")
-        })
+        })?;
+
+    // Publish MemberChanged with current member list (T-6-07).
+    let member_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT user_id FROM card_members WHERE card_id = ?",
+    )
+    .bind(&card_id)
+    .fetch_all(&state.read_pool.0)
+    .await
+    .unwrap_or_default();
+
+    let seq = state.board_rooms.next_seq(&board_id);
+    state.board_rooms.publish(
+        &board_id,
+        BoardEvent::MemberChanged { board_seq: seq, client_id, card_id, member_ids },
+    );
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -938,25 +1065,48 @@ pub async fn update_card_description_inner(
 ///
 /// Validates: non-empty, ≤500 chars.
 /// IDOR scope: UPDATE WHERE id = ? AND board_id = ? (T-05-04).
+/// `client_id`: opaque per-connection UUID for D-05 self-echo suppression (T-6-03).
 #[server]
 pub async fn update_card_title(
     board_id: String,
     card_id: String,
     title: String,
+    client_id: String,
 ) -> Result<String, ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
+    use crate::models::events::{BoardEvent, CardPatch};
 
     let state = expect_context::<AppState>();
 
     require_board_member(&board_id, &state.read_pool.0).await?;
 
-    update_card_title_inner(&state.write_pool.0, &board_id, &card_id, title)
+    let saved_title = update_card_title_inner(&state.write_pool.0, &board_id, &card_id, title)
         .await
         .map_err(|e| {
             tracing::error!("update_card_title error: {e}");
             ServerFnError::new("Couldn't save changes. Try again.")
-        })
+        })?;
+
+    // Publish CardUpdated with title patch after successful DB write (T-6-07).
+    let seq = state.board_rooms.next_seq(&board_id);
+    state.board_rooms.publish(
+        &board_id,
+        BoardEvent::CardUpdated {
+            board_seq: seq,
+            client_id,
+            card_id,
+            patch: CardPatch {
+                title: Some(saved_title.clone()),
+                description: None,
+                cover: None,
+                done: None,
+                card_num: None,
+            },
+        },
+    );
+
+    Ok(saved_title)
 }
 
 /// Update a card's description (stores raw markdown; render_markdown is applied on read).
@@ -966,14 +1116,17 @@ pub async fn update_card_title(
 /// Returns the freshly re-rendered, sanitized description HTML so the client can update
 /// the modal in place without a full refetch (WR-09) — which otherwise raced the
 /// separate read pool and could momentarily show the old description.
+/// `client_id`: opaque per-connection UUID for D-05 self-echo suppression (T-6-03).
 #[server]
 pub async fn update_card_description(
     board_id: String,
     card_id: String,
     description: String,
+    client_id: String,
 ) -> Result<String, ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
+    use crate::models::events::{BoardEvent, CardPatch};
 
     let state = expect_context::<AppState>();
 
@@ -985,6 +1138,27 @@ pub async fn update_card_description(
             tracing::error!("update_card_description error: {e}");
             ServerFnError::new("Couldn't save changes. Try again.")
         })?;
+
+    // Publish CardUpdated with description patch after successful DB write (T-6-07).
+    // Note: we broadcast the raw markdown (not rendered HTML) as the patch value;
+    // the WASM client does not render markdown — it updates display from the signal which
+    // is patched from this broadcast. The modal itself re-renders from update_desc_action result.
+    let seq = state.board_rooms.next_seq(&board_id);
+    state.board_rooms.publish(
+        &board_id,
+        BoardEvent::CardUpdated {
+            board_seq: seq,
+            client_id,
+            card_id,
+            patch: CardPatch {
+                title: None,
+                description: Some(description.clone()),
+                cover: None,
+                done: None,
+                card_num: None,
+            },
+        },
+    );
 
     Ok(render_markdown(&description))
 }
@@ -1162,20 +1336,23 @@ pub async fn add_comment_inner(
 /// Security (T-05-16): board membership required; comment scoped to card on that board.
 /// Security (T-05-13): comment body returned as ActivityEntry.text — rendered as text node in UI.
 /// Security (T-05-14/15): mention notifications only for board members; self excluded.
+/// `client_id`: opaque per-connection UUID for D-05 self-echo suppression (T-6-03).
 #[server]
 pub async fn add_comment(
     board_id: String,
     card_id: String,
     body: String,
     mention_user_ids: Vec<String>,
+    client_id: String,
 ) -> Result<crate::models::ActivityEntry, ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
+    use crate::models::events::BoardEvent;
 
     let state = expect_context::<AppState>();
     let (user, _role) = require_board_member(&board_id, &state.read_pool.0).await?;
 
-    add_comment_inner(
+    let entry = add_comment_inner(
         &state.write_pool.0,
         &board_id,
         &card_id,
@@ -1187,7 +1364,24 @@ pub async fn add_comment(
     .map_err(|e| {
         tracing::error!("add_comment error: {e}");
         ServerFnError::new("Couldn't save changes. Try again.")
-    })
+    })?;
+
+    // Publish CommentAdded after successful DB write (T-6-07).
+    let seq = state.board_rooms.next_seq(&board_id);
+    state.board_rooms.publish(
+        &board_id,
+        BoardEvent::CommentAdded {
+            board_seq: seq,
+            client_id,
+            card_id,
+            comment_id: entry.id.clone(),
+            author_id: user.id.clone(),
+            text: entry.text.clone(),
+            created_at: entry.created_at,
+        },
+    );
+
+    Ok(entry)
 }
 
 // ---------------------------------------------------------------------------
@@ -1429,6 +1623,7 @@ pub async fn archive_card_inner(
 ///
 /// Caller must be a member of BOTH the source and target board (T-05-23).
 /// Same-board list moves reuse the existing `move_card` server fn from card_api.rs.
+/// `client_id`: opaque per-connection UUID for D-05 self-echo suppression (T-6-03).
 #[server]
 pub async fn move_card_cross_board(
     from_board_id: String,
@@ -1436,14 +1631,16 @@ pub async fn move_card_cross_board(
     to_board_id: String,
     to_list_id: String,
     new_position: String,
+    client_id: String,
 ) -> Result<i64, ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
+    use crate::models::events::BoardEvent;
     let state = expect_context::<AppState>();
     // Must be member of BOTH boards (T-05-23)
     require_board_member(&from_board_id, &state.read_pool.0).await?;
     require_board_member(&to_board_id, &state.read_pool.0).await?;
-    move_card_cross_board_inner(
+    let new_card_num = move_card_cross_board_inner(
         &state.write_pool.0,
         &from_board_id,
         &card_id,
@@ -1455,7 +1652,20 @@ pub async fn move_card_cross_board(
     .map_err(|e| {
         tracing::error!("move_card_cross_board error: {e}");
         ServerFnError::new("Couldn't move card. Try again.")
-    })
+    })?;
+
+    // Publish CardMovedCrossBoard to the SOURCE board (card left this board — T-6-07).
+    let seq = state.board_rooms.next_seq(&from_board_id);
+    state.board_rooms.publish(
+        &from_board_id,
+        BoardEvent::CardMovedCrossBoard {
+            board_seq: seq,
+            client_id,
+            card_id,
+        },
+    );
+
+    Ok(new_card_num)
 }
 
 /// Watch or unwatch a card (auth-guarded, returns updated distinct watcher count).
@@ -1486,13 +1696,16 @@ pub async fn watch_card(
 /// Archive a card (auth-guarded, board-member-scoped — T-05-26).
 ///
 /// Card is removed from get_board_inner after this (archived=1 filtered out).
+/// `client_id`: opaque per-connection UUID for D-05 self-echo suppression (T-6-03).
 #[server]
 pub async fn archive_card(
     board_id: String,
     card_id: String,
+    client_id: String,
 ) -> Result<(), ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
+    use crate::models::events::BoardEvent;
     let state = expect_context::<AppState>();
     require_board_member(&board_id, &state.read_pool.0).await?;
     archive_card_inner(&state.write_pool.0, &board_id, &card_id)
@@ -1500,7 +1713,16 @@ pub async fn archive_card(
         .map_err(|e| {
             tracing::error!("archive_card error: {e}");
             ServerFnError::new("Couldn't archive card. Try again.")
-        })
+        })?;
+
+    // Publish CardArchived after successful DB write (T-6-07).
+    let seq = state.board_rooms.next_seq(&board_id);
+    state.board_rooms.publish(
+        &board_id,
+        BoardEvent::CardArchived { board_seq: seq, client_id, card_id },
+    );
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

@@ -218,6 +218,9 @@ pub fn LabelPicker(
                                                 card_id: cid.clone(),
                                                 label_id: lid.clone(),
                                                 assigned: new_assigned,
+                                                client_id: board_signals
+                                                    .and_then(|bs| bs.own_client_id.get_untracked())
+                                                    .unwrap_or_default(),
                                             });
                                         }
                                     }
@@ -369,6 +372,9 @@ pub fn DatePicker(
                                 board_id: bid.clone(),
                                 card_id: cid.clone(),
                                 due_at: new_due,
+                                client_id: board_signals
+                                    .and_then(|bs| bs.own_client_id.get_untracked())
+                                    .unwrap_or_default(),
                             });
                             show.set(false);
                         }
@@ -396,6 +402,9 @@ pub fn DatePicker(
                                     board_id: bid.clone(),
                                     card_id: cid.clone(),
                                     due_at: None,
+                                    client_id: board_signals
+                                        .and_then(|bs| bs.own_client_id.get_untracked())
+                                        .unwrap_or_default(),
                                 });
                                 show.set(false);
                             }
@@ -517,6 +526,9 @@ pub fn PriorityPicker(
                                         board_id: bid.clone(),
                                         card_id: cid.clone(),
                                         priority: pv.clone(),
+                                        client_id: board_signals
+                                            .and_then(|bs| bs.own_client_id.get_untracked())
+                                            .unwrap_or_default(),
                                     });
                                     show.set(false);
                                 }
@@ -672,17 +684,22 @@ pub fn MemberPicker(
                                                 });
                                             }
 
+                                            let client_id_val = board_signals
+                                                .and_then(|bs| bs.own_client_id.get_untracked())
+                                                .unwrap_or_default();
                                             if currently_assigned {
                                                 remove_action.dispatch(RemoveMember {
                                                     board_id: bid.clone(),
                                                     card_id: cid.clone(),
                                                     user_id: uid.clone(),
+                                                    client_id: client_id_val,
                                                 });
                                             } else {
                                                 assign_action.dispatch(AssignMember {
                                                     board_id: bid.clone(),
                                                     card_id: cid.clone(),
                                                     user_id: uid.clone(),
+                                                    client_id: client_id_val,
                                                 });
                                             }
                                         }

@@ -69,12 +69,164 @@ mod tests {
         }
     }
 
-    /// Placeholder for publish hook integration tests (filled by 06-02).
-    /// Asserts BoardEvent variants serialize/deserialize round-trip correctly.
+    /// Asserts every BoardEvent mutation variant serializes and deserializes round-trip
+    /// correctly via serde_json. This guards the wire contract: if a variant field name
+    /// changes, this test will catch it before 06-04/06-05 can silently break.
     #[test]
     fn test_publish_hooks() {
-        // filled in by 06-02
-        assert!(true);
+        use lanes::models::events::{BoardEvent, CardPatch, CardSummary};
+        use lanes::models::CardLabel;
+
+        fn rt(ev: BoardEvent) -> BoardEvent {
+            let json = serde_json::to_string(&ev).expect("serialize");
+            serde_json::from_str::<BoardEvent>(&json).expect("deserialize")
+        }
+
+        // CardAdded
+        let ev = BoardEvent::CardAdded {
+            board_seq: 1,
+            client_id: "c-1".into(),
+            card: CardSummary {
+                id: "card-1".into(),
+                list_id: "list-1".into(),
+                board_id: "board-1".into(),
+                card_num: 1,
+                title: "Test".into(),
+                position: "a0".into(),
+                priority: None,
+                due_at: None,
+                done: false,
+                cover: None,
+                labels: vec![],
+                member_ids: vec![],
+            },
+        };
+        match rt(ev) {
+            BoardEvent::CardAdded { board_seq, client_id, card } => {
+                assert_eq!(board_seq, 1);
+                assert_eq!(client_id, "c-1");
+                assert_eq!(card.title, "Test");
+            }
+            _ => panic!("CardAdded round-trip failed"),
+        }
+
+        // CardUpdated
+        let ev = BoardEvent::CardUpdated {
+            board_seq: 2,
+            client_id: "c-2".into(),
+            card_id: "card-1".into(),
+            patch: CardPatch { title: Some("Updated".into()), description: None, cover: None, done: None, card_num: None },
+        };
+        match rt(ev) {
+            BoardEvent::CardUpdated { patch, .. } => assert_eq!(patch.title.as_deref(), Some("Updated")),
+            _ => panic!("CardUpdated round-trip failed"),
+        }
+
+        // CardArchived
+        let ev = BoardEvent::CardArchived { board_seq: 3, client_id: "c-3".into(), card_id: "card-2".into() };
+        match rt(ev) {
+            BoardEvent::CardArchived { card_id, .. } => assert_eq!(card_id, "card-2"),
+            _ => panic!("CardArchived round-trip failed"),
+        }
+
+        // CommentAdded
+        let ev = BoardEvent::CommentAdded {
+            board_seq: 4, client_id: "c-4".into(), card_id: "card-1".into(),
+            comment_id: "cmt-1".into(), author_id: "user-1".into(),
+            text: "Hello".into(), created_at: 1234567890,
+        };
+        match rt(ev) {
+            BoardEvent::CommentAdded { text, .. } => assert_eq!(text, "Hello"),
+            _ => panic!("CommentAdded round-trip failed"),
+        }
+
+        // ChecklistUpdated
+        let ev = BoardEvent::ChecklistUpdated {
+            board_seq: 5, client_id: "c-5".into(), card_id: "card-1".into(),
+            checklist_done: 2, checklist_total: 3,
+        };
+        match rt(ev) {
+            BoardEvent::ChecklistUpdated { checklist_done, checklist_total, .. } => {
+                assert_eq!(checklist_done, 2);
+                assert_eq!(checklist_total, 3);
+            }
+            _ => panic!("ChecklistUpdated round-trip failed"),
+        }
+
+        // LabelChanged
+        let ev = BoardEvent::LabelChanged {
+            board_seq: 6, client_id: "c-6".into(), card_id: "card-1".into(),
+            labels: vec![CardLabel { id: "lbl-1".into(), name: "Bug".into(), color: "#f00".into() }],
+        };
+        match rt(ev) {
+            BoardEvent::LabelChanged { labels, .. } => assert_eq!(labels.len(), 1),
+            _ => panic!("LabelChanged round-trip failed"),
+        }
+
+        // PriorityChanged
+        let ev = BoardEvent::PriorityChanged {
+            board_seq: 7, client_id: "c-7".into(), card_id: "card-1".into(), priority: Some("P1".into()),
+        };
+        match rt(ev) {
+            BoardEvent::PriorityChanged { priority, .. } => assert_eq!(priority.as_deref(), Some("P1")),
+            _ => panic!("PriorityChanged round-trip failed"),
+        }
+
+        // DueDateChanged
+        let ev = BoardEvent::DueDateChanged {
+            board_seq: 8, client_id: "c-8".into(), card_id: "card-1".into(), due_at: Some(1234567890),
+        };
+        match rt(ev) {
+            BoardEvent::DueDateChanged { due_at, .. } => assert_eq!(due_at, Some(1234567890)),
+            _ => panic!("DueDateChanged round-trip failed"),
+        }
+
+        // MemberChanged
+        let ev = BoardEvent::MemberChanged {
+            board_seq: 9, client_id: "c-9".into(), card_id: "card-1".into(),
+            member_ids: vec!["user-1".into()],
+        };
+        match rt(ev) {
+            BoardEvent::MemberChanged { member_ids, .. } => assert_eq!(member_ids.len(), 1),
+            _ => panic!("MemberChanged round-trip failed"),
+        }
+
+        // ListAdded
+        let ev = BoardEvent::ListAdded {
+            board_seq: 10, client_id: "c-10".into(), list_id: "list-1".into(),
+            name: "To Do".into(), position: "b0".into(),
+        };
+        match rt(ev) {
+            BoardEvent::ListAdded { name, .. } => assert_eq!(name, "To Do"),
+            _ => panic!("ListAdded round-trip failed"),
+        }
+
+        // ListRenamed
+        let ev = BoardEvent::ListRenamed {
+            board_seq: 11, client_id: "c-11".into(), list_id: "list-1".into(), name: "In Progress".into(),
+        };
+        match rt(ev) {
+            BoardEvent::ListRenamed { name, .. } => assert_eq!(name, "In Progress"),
+            _ => panic!("ListRenamed round-trip failed"),
+        }
+
+        // ListReordered
+        let ev = BoardEvent::ListReordered {
+            board_seq: 12, client_id: "c-12".into(), list_id: "list-1".into(), position: "c0".into(),
+        };
+        match rt(ev) {
+            BoardEvent::ListReordered { position, .. } => assert_eq!(position, "c0"),
+            _ => panic!("ListReordered round-trip failed"),
+        }
+
+        // CardMovedCrossBoard
+        let ev = BoardEvent::CardMovedCrossBoard {
+            board_seq: 13, client_id: "c-13".into(), card_id: "card-5".into(),
+        };
+        match rt(ev) {
+            BoardEvent::CardMovedCrossBoard { card_id, .. } => assert_eq!(card_id, "card-5"),
+            _ => panic!("CardMovedCrossBoard round-trip failed"),
+        }
     }
 
     /// Placeholder for lagged receiver → Refresh behavior (filled by 06-03).

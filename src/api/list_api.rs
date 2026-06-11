@@ -147,10 +147,12 @@ pub async fn reorder_list_inner(
 /// Create a list at the end of a board's list sequence.
 /// Enforces board membership (T-03-07). Validates name (T-03-09).
 /// Computes fractional position via next_list_position (BOARD-03).
+/// `client_id`: opaque per-connection UUID for D-05 self-echo suppression (T-6-03).
 #[server]
-pub async fn create_list(board_id: String, name: String) -> Result<List, ServerFnError> {
+pub async fn create_list(board_id: String, name: String, client_id: String) -> Result<List, ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
+    use crate::models::events::BoardEvent;
 
     let state = expect_context::<AppState>();
 
@@ -173,18 +175,35 @@ pub async fn create_list(board_id: String, name: String) -> Result<List, ServerF
     })?;
 
     // Insert on write pool
-    create_list_inner(&state.write_pool.0, &board_id, name, &position).await.map_err(|e| {
+    let list = create_list_inner(&state.write_pool.0, &board_id, name, &position).await.map_err(|e| {
         tracing::error!("create_list_inner error: {e}");
         ServerFnError::new("Failed to create list")
-    })
+    })?;
+
+    // Publish ListAdded after successful DB write (T-6-07).
+    let seq = state.board_rooms.next_seq(&board_id);
+    state.board_rooms.publish(
+        &board_id,
+        BoardEvent::ListAdded {
+            board_seq: seq,
+            client_id,
+            list_id: list.id.clone(),
+            name: list.name.clone(),
+            position: list.position.clone(),
+        },
+    );
+
+    Ok(list)
 }
 
 /// Rename a list. Resolves board_id from the list, then enforces board membership.
 /// Validates the new name (trim, reject empty, reject > 120 chars) (BOARD-04, T-03-09).
+/// `client_id`: opaque per-connection UUID for D-05 self-echo suppression (T-6-03).
 #[server]
-pub async fn rename_list(list_id: String, name: String) -> Result<(), ServerFnError> {
+pub async fn rename_list(list_id: String, name: String, client_id: String) -> Result<(), ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
+    use crate::models::events::BoardEvent;
 
     let state = expect_context::<AppState>();
 
@@ -208,19 +227,35 @@ pub async fn rename_list(list_id: String, name: String) -> Result<(), ServerFnEr
         return Err(ServerFnError::new("List name must be 120 characters or fewer"));
     }
 
-    rename_list_inner(&state.write_pool.0, &list_id, name).await.map_err(|e| {
+    rename_list_inner(&state.write_pool.0, &list_id, name.clone()).await.map_err(|e| {
         tracing::error!("rename_list_inner error: {e}");
         ServerFnError::new("Failed to rename list")
-    })
+    })?;
+
+    // Publish ListRenamed after successful DB write (T-6-07).
+    let seq = state.board_rooms.next_seq(&board_id);
+    state.board_rooms.publish(
+        &board_id,
+        BoardEvent::ListRenamed {
+            board_seq: seq,
+            client_id,
+            list_id,
+            name,
+        },
+    );
+
+    Ok(())
 }
 
 /// Reorder a list by persisting a client-computed fractional position.
 /// The position midpoint is computed client-side (Wave 2 DnD / Phase 3 Move left/right);
 /// this fn validates and persists it (BOARD-05, T-03-08, D-15).
+/// `client_id`: opaque per-connection UUID for D-05 self-echo suppression (T-6-03).
 #[server]
-pub async fn reorder_list(list_id: String, new_position: String) -> Result<(), ServerFnError> {
+pub async fn reorder_list(list_id: String, new_position: String, client_id: String) -> Result<(), ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
+    use crate::models::events::BoardEvent;
 
     let state = expect_context::<AppState>();
 
@@ -242,8 +277,22 @@ pub async fn reorder_list(list_id: String, new_position: String) -> Result<(), S
             .map_err(|_| ServerFnError::new("invalid position"))?;
     }
 
-    reorder_list_inner(&state.write_pool.0, &list_id, new_position).await.map_err(|e| {
+    reorder_list_inner(&state.write_pool.0, &list_id, new_position.clone()).await.map_err(|e| {
         tracing::error!("reorder_list_inner error: {e}");
         ServerFnError::new("Failed to reorder list")
-    })
+    })?;
+
+    // Publish ListReordered after successful DB write (T-6-07).
+    let seq = state.board_rooms.next_seq(&board_id);
+    state.board_rooms.publish(
+        &board_id,
+        BoardEvent::ListReordered {
+            board_seq: seq,
+            client_id,
+            list_id,
+            position: new_position,
+        },
+    );
+
+    Ok(())
 }

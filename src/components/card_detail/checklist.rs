@@ -208,6 +208,9 @@ pub fn ChecklistSection(
                                                     card_id: cid.clone(),
                                                     item_id: iid,
                                                     done: new_done,
+                                                    client_id: use_context::<crate::routes::board::BoardSignals>()
+                                                        .and_then(|bs| bs.own_client_id.get_untracked())
+                                                        .unwrap_or_default(),
                                                 });
                                             }
                                         }
@@ -227,6 +230,9 @@ pub fn ChecklistSection(
                                                     card_id: card_id.get_value(),
                                                     item_id: iid,
                                                     done: new_done,
+                                                    client_id: use_context::<crate::routes::board::BoardSignals>()
+                                                        .and_then(|bs| bs.own_client_id.get_untracked())
+                                                        .unwrap_or_default(),
                                                 });
                                             }
                                         }
@@ -279,6 +285,9 @@ pub fn ChecklistSection(
                                                     board_id: bid.clone(),
                                                     card_id: cid.clone(),
                                                     text: t,
+                                                    client_id: use_context::<crate::routes::board::BoardSignals>()
+                                                        .and_then(|bs| bs.own_client_id.get_untracked())
+                                                        .unwrap_or_default(),
                                                 });
                                             }
                                         }
@@ -305,6 +314,9 @@ pub fn ChecklistSection(
                                                 board_id: bid.clone(),
                                                 card_id: cid.clone(),
                                                 text: t,
+                                                client_id: use_context::<crate::routes::board::BoardSignals>()
+                                                    .and_then(|bs| bs.own_client_id.get_untracked())
+                                                    .unwrap_or_default(),
                                             });
                                         }
                                     }

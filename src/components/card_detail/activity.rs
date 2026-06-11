@@ -216,6 +216,9 @@ pub fn ActivitySection(
                                         card_id: card_id.get_value(),
                                         body,
                                         mention_user_ids: ids,
+                                        client_id: use_context::<BoardSignals>()
+                                            .and_then(|bs| bs.own_client_id.get_untracked())
+                                            .unwrap_or_default(),
                                     });
                                 }
                             >

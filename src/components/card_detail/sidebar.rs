@@ -358,12 +358,16 @@ pub fn SidebarColumn(
                                                 });
                                             } else {
                                                 // Cross-board: use move_card_cross_board
+                                                let client_id = use_context::<crate::routes::board::BoardSignals>()
+                                                    .and_then(|bs| bs.own_client_id.get_untracked())
+                                                    .unwrap_or_default();
                                                 move_cross_action.dispatch(MoveCardCrossBoard {
                                                     from_board_id: bid,
                                                     card_id: cid,
                                                     to_board_id: tboard,
                                                     to_list_id: tlist,
                                                     new_position: pos,
+                                                    client_id,
                                                 });
                                             }
                                             show_move_popover.set(false);
@@ -423,9 +427,13 @@ pub fn SidebarColumn(
                                     on:click=move |_| {
                                         let bid = board_id_sv.get_value();
                                         let cid = card_id_sv.get_value();
+                                        let client_id = use_context::<crate::routes::board::BoardSignals>()
+                                            .and_then(|bs| bs.own_client_id.get_untracked())
+                                            .unwrap_or_default();
                                         archive_action.dispatch(ArchiveCard {
                                             board_id: bid,
                                             card_id: cid,
+                                            client_id,
                                         });
                                         show_archive_confirm.set(false);
                                     }
