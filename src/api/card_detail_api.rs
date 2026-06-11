@@ -79,6 +79,16 @@ pub async fn get_card_detail_inner(
         description,
     ) = card_row.ok_or_else(|| sqlx::Error::Decode("card not found".into()))?;
 
+    // Card creation timestamp for the modal header (WR-05).
+    // Fetched separately to keep the main row tuple within sqlx's 16-element
+    // FromRow limit.
+    let created_at: i64 = sqlx::query_scalar(
+        "SELECT created_at FROM cards WHERE id = ?",
+    )
+    .bind(&card_id)
+    .fetch_one(pool)
+    .await?;
+
     // -----------------------------------------------------------------------
     // 2. Fetch card labels (scoped by labels.board_id — T-05-03)
     // -----------------------------------------------------------------------
@@ -321,6 +331,7 @@ pub async fn get_card_detail_inner(
         is_watching,
         board_members,
         board_labels,
+        created_at,
     })
 }
 

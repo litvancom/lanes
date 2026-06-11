@@ -190,6 +190,7 @@ pub fn CardDetailModal(
                         });
 
                         let cn = card.with_value(|c| c.card_num);
+                        let created_at = data.created_at;
                         let card_id = card.with_value(|c| c.id.clone());
                         let member_ids = card.with_value(|c| c.member_ids.clone());
                         let labels = card.with_value(|c| c.labels.clone());
@@ -346,7 +347,7 @@ pub fn CardDetailModal(
                                                 </div>
                                                 <span style="font-size: 11px; color: var(--text-muted)">
                                                     "· created "
-                                                    {relative_time(0)}
+                                                    {relative_time(created_at)}
                                                 </span>
                                             </div>
                                         </div>

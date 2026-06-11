@@ -172,4 +172,6 @@ pub struct CardDetail {
     pub board_members: Vec<UserSummary>,
     /// All labels on this board (for label picker — includes unassigned labels).
     pub board_labels: Vec<CardLabel>,
+    /// When the card was created (epoch millis UTC) — for the modal header "created" label.
+    pub created_at: i64,
 }
