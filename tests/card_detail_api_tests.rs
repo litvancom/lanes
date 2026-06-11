@@ -842,4 +842,282 @@ mod card_detail_api_tests {
         let result_out = assign_member_inner(&write_pool, &board_id, &card_id, &outsider_id).await;
         assert!(result_out.is_err(), "non-board-member assign must be rejected (T-05-09)");
     }
+
+    // -------------------------------------------------------------------------
+    // Plan 06: move_card_cross_board_inner, watch/unwatch, archive_card_inner
+    // -------------------------------------------------------------------------
+
+    /// Helper: insert a card with card_num (ensuring boards.next_card_num is set correctly).
+    async fn insert_card_with_num(
+        pool: &sqlx::SqlitePool,
+        board_id: &str,
+        list_id: &str,
+        title: &str,
+        card_num: i64,
+    ) -> String {
+        use uuid::Uuid;
+        use fractional_index::FractionalIndex;
+        let card_id = Uuid::now_v7().to_string();
+        let pos = FractionalIndex::default().to_string();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        sqlx::query!(
+            r#"INSERT INTO cards (id, list_id, board_id, card_num, title, position,
+               done, archived, checklist_done, checklist_total, comment_count, attachment_count,
+               created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, ?, ?)"#,
+            card_id, list_id, board_id, card_num, title, pos, now, now
+        )
+        .execute(pool)
+        .await
+        .expect("insert card with num");
+        card_id
+    }
+
+    /// move_card_cross_board_inner:
+    /// - reallocates card_num on target board
+    /// - updates board_id + list_id
+    /// - strips all card_labels (board-scoped, D-05)
+    /// - strips non-target-board card_members (D-05)
+    /// - keeps comments and attachments (child rows keyed by card_id — A3)
+    /// - logs a card_events 'moved' entry (D-06)
+    #[tokio::test]
+    async fn test_cross_board_move_reallocates_and_strips() {
+        use lanes::api::card_detail_api::move_card_cross_board_inner;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        // Board A setup
+        let owner_id = insert_user_direct(&write_pool, "cross_owner@test.com").await;
+        let only_a_user_id = insert_user_direct(&write_pool, "only_a@test.com").await;
+        let both_user_id = insert_user_direct(&write_pool, "both_boards@test.com").await;
+        let board_a_id = insert_board_direct(&write_pool, "Board A").await;
+        let board_b_id = insert_board_direct(&write_pool, "Board B").await;
+
+        // Members: owner + only_a in board A; owner + both_user in board B
+        insert_member_direct(&write_pool, &board_a_id, &owner_id, "owner").await;
+        insert_member_direct(&write_pool, &board_a_id, &only_a_user_id, "member").await;
+        insert_member_direct(&write_pool, &board_a_id, &both_user_id, "member").await;
+        insert_member_direct(&write_pool, &board_b_id, &owner_id, "owner").await;
+        insert_member_direct(&write_pool, &board_b_id, &both_user_id, "member").await;
+        // NOTE: only_a_user_id is NOT a member of board B
+
+        let list_a_id = insert_list_direct(&write_pool, &board_a_id, "List A").await;
+        let list_b_id = insert_list_direct(&write_pool, &board_b_id, "List B").await;
+
+        // Set next_card_num so we can verify reallocation
+        sqlx::query!("UPDATE boards SET next_card_num = 1 WHERE id = ?", board_a_id)
+            .execute(&write_pool).await.expect("set next_card_num A");
+        sqlx::query!("UPDATE boards SET next_card_num = 5 WHERE id = ?", board_b_id)
+            .execute(&write_pool).await.expect("set next_card_num B (5 = first on B)");
+
+        let card_id = insert_card_with_num(&write_pool, &board_a_id, &list_a_id, "Lisbon Trip", 1).await;
+
+        // Add a label on board A
+        let label_a_id: String = {
+            use uuid::Uuid;
+            let id = Uuid::now_v7().to_string();
+            sqlx::query!("INSERT INTO labels (id, board_id, name, color) VALUES (?, ?, 'Travel', '#abc')", id, board_a_id)
+                .execute(&write_pool).await.expect("insert label A");
+            sqlx::query!("INSERT INTO card_labels (card_id, label_id) VALUES (?, ?)", card_id, id)
+                .execute(&write_pool).await.expect("insert card_label");
+            id
+        };
+        let _ = label_a_id;
+
+        // Add card members: owner (on B), only_a (NOT on B), both_user (on B)
+        sqlx::query!("INSERT INTO card_members (card_id, user_id) VALUES (?, ?)", card_id, owner_id)
+            .execute(&write_pool).await.expect("cm owner");
+        sqlx::query!("INSERT INTO card_members (card_id, user_id) VALUES (?, ?)", card_id, only_a_user_id)
+            .execute(&write_pool).await.expect("cm only_a");
+        sqlx::query!("INSERT INTO card_members (card_id, user_id) VALUES (?, ?)", card_id, both_user_id)
+            .execute(&write_pool).await.expect("cm both");
+
+        // Add a comment (child row — should survive)
+        {
+            use uuid::Uuid;
+            let cmt_id = Uuid::now_v7().to_string();
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_millis() as i64;
+            sqlx::query!("INSERT INTO comments (id, card_id, author_id, body, created_at) VALUES (?, ?, ?, 'test comment', ?)",
+                cmt_id, card_id, owner_id, now)
+                .execute(&write_pool).await.expect("insert comment");
+        }
+
+        // Add an attachment (child row — should survive)
+        {
+            use uuid::Uuid;
+            let att_id = Uuid::now_v7().to_string();
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_millis() as i64;
+            sqlx::query!("INSERT INTO attachments (id, card_id, uploader_id, filename, url, size_bytes, created_at) VALUES (?, ?, ?, 'file.pdf', '/api/a/1', 100, ?)",
+                att_id, card_id, owner_id, now)
+                .execute(&write_pool).await.expect("insert attachment");
+        }
+
+        // --- Perform cross-board move ---
+        use fractional_index::FractionalIndex;
+        let new_pos = FractionalIndex::default().to_string();
+        let result = move_card_cross_board_inner(
+            &write_pool,
+            &board_a_id,
+            &card_id,
+            &board_b_id,
+            &list_b_id,
+            &new_pos,
+        ).await;
+        assert!(result.is_ok(), "cross-board move must succeed: {:?}", result.err());
+        let new_card_num = result.unwrap();
+
+        // 1. New card_num equals what board B allocated (5)
+        assert_eq!(new_card_num, 5, "new card_num must be the pre-move next_card_num (5)");
+
+        // 2. boards.next_card_num on board B must be 6 now
+        let b_next: i64 = sqlx::query_scalar("SELECT next_card_num FROM boards WHERE id = ?")
+            .bind(&board_b_id)
+            .fetch_one(&write_pool).await.expect("next_card_num B");
+        assert_eq!(b_next, 6, "boards.next_card_num on B must be incremented to 6");
+
+        // 3. Card row updated: board_id = board_b, list_id = list_b, card_num = 5
+        let (db_board, db_list, db_num): (String, String, i64) = sqlx::query_as(
+            "SELECT board_id, list_id, card_num FROM cards WHERE id = ?"
+        )
+        .bind(&card_id)
+        .fetch_one(&write_pool).await.expect("card row after move");
+        assert_eq!(db_board, board_b_id, "card must be on board B after cross-board move");
+        assert_eq!(db_list, list_b_id, "card must be in list B after cross-board move");
+        assert_eq!(db_num, 5, "card_num must be the new allocation");
+
+        // 4. card_labels stripped (T-05-24)
+        let label_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM card_labels WHERE card_id = ?")
+            .bind(&card_id)
+            .fetch_one(&write_pool).await.expect("label count");
+        assert_eq!(label_count, 0, "all board-scoped labels must be stripped on cross-board move (D-05)");
+
+        // 5. Only target-board members remain
+        let remaining_members: Vec<String> = sqlx::query_scalar(
+            "SELECT user_id FROM card_members WHERE card_id = ? ORDER BY user_id ASC"
+        )
+        .bind(&card_id)
+        .fetch_all(&write_pool).await.expect("card_members after move");
+        // only_a is NOT on board B — must be removed
+        assert!(!remaining_members.contains(&only_a_user_id),
+            "only_a (not on board B) must be removed from card_members (D-05)");
+        // owner and both_user are on board B — must remain
+        assert!(remaining_members.contains(&owner_id),
+            "owner (on board B) must remain in card_members");
+        assert!(remaining_members.contains(&both_user_id),
+            "both_user (on board B) must remain in card_members");
+
+        // 6. Comments still present (keyed by card_id — A3)
+        let comment_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM comments WHERE card_id = ?")
+            .bind(&card_id)
+            .fetch_one(&write_pool).await.expect("comment count");
+        assert_eq!(comment_count, 1, "comments must survive cross-board move (A3)");
+
+        // 7. Attachments still present (keyed by card_id — A3)
+        let attachment_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE card_id = ?")
+            .bind(&card_id)
+            .fetch_one(&write_pool).await.expect("attachment count");
+        assert_eq!(attachment_count, 1, "attachments must survive cross-board move (A3)");
+
+        // 8. card_events 'moved' entry exists (D-06)
+        let event_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM card_events WHERE card_id = ? AND kind = 'moved'"
+        )
+        .bind(&card_id)
+        .fetch_one(&write_pool).await.expect("event count");
+        assert_eq!(event_count, 1, "a 'moved' card_event must be logged (D-06)");
+    }
+
+    /// watch_card_inner / unwatch_card_inner return updated distinct watcher count.
+    #[tokio::test]
+    async fn test_watch_unwatch_count() {
+        use lanes::api::card_detail_api::{watch_card_inner, unwatch_card_inner};
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        let user_id = insert_user_direct(&write_pool, "watcher@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Watch Board").await;
+        insert_member_direct(&write_pool, &board_id, &user_id, "owner").await;
+        let list_id = insert_list_direct(&write_pool, &board_id, "Watch List").await;
+        let card_id = insert_card_with_num(&write_pool, &board_id, &list_id, "Watch Card", 1).await;
+
+        // Watch → count 1
+        let count_after_watch = watch_card_inner(&write_pool, &card_id, &user_id).await
+            .expect("watch_card_inner must succeed");
+        assert_eq!(count_after_watch, 1, "watcher count must be 1 after watch");
+
+        // Idempotent watch (INSERT OR IGNORE) → count still 1
+        let count_dupe = watch_card_inner(&write_pool, &card_id, &user_id).await
+            .expect("duplicate watch must not error");
+        assert_eq!(count_dupe, 1, "watcher count must still be 1 after duplicate watch");
+
+        // Unwatch → count 0
+        let count_after_unwatch = unwatch_card_inner(&write_pool, &card_id, &user_id).await
+            .expect("unwatch_card_inner must succeed");
+        assert_eq!(count_after_unwatch, 0, "watcher count must be 0 after unwatch");
+
+        // Unwatch again (idempotent) → count still 0
+        let count_dupe_unwatch = unwatch_card_inner(&write_pool, &card_id, &user_id).await
+            .expect("duplicate unwatch must not error");
+        assert_eq!(count_dupe_unwatch, 0, "watcher count must still be 0 after duplicate unwatch");
+    }
+
+    /// archive_card_inner sets archived=1 scoped by id AND board_id,
+    /// logs a card_events 'archived' entry, and the card is absent from get_board_inner.
+    #[tokio::test]
+    async fn test_archive_card_absent_from_get_board() {
+        use lanes::api::card_detail_api::archive_card_inner;
+        use lanes::api::board_api::get_board_inner;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        let user_id = insert_user_direct(&write_pool, "archiver@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Archive Board").await;
+        insert_member_direct(&write_pool, &board_id, &user_id, "owner").await;
+        let list_id = insert_list_direct(&write_pool, &board_id, "Archive List").await;
+
+        // Set up a board name/key_prefix since get_board_inner needs the board row
+        sqlx::query!("UPDATE boards SET name = 'Archive Board', key_prefix = 'ARB' WHERE id = ?", board_id)
+            .execute(&write_pool).await.expect("update board");
+
+        let card_id = insert_card_with_num(&write_pool, &board_id, &list_id, "To Archive", 1).await;
+
+        // Card is present before archive
+        let board_before = get_board_inner(&write_pool, &board_id, &user_id).await
+            .expect("get_board before archive must succeed");
+        let card_ids_before: Vec<String> = board_before.cards.iter()
+            .map(|c| c.id.clone()).collect();
+        assert!(card_ids_before.contains(&card_id),
+            "card must be present before archiving");
+
+        // Archive
+        let result = archive_card_inner(&write_pool, &board_id, &card_id).await;
+        assert!(result.is_ok(), "archive_card_inner must succeed: {:?}", result.err());
+
+        // DB row: archived = 1
+        let archived: i64 = sqlx::query_scalar("SELECT archived FROM cards WHERE id = ?")
+            .bind(&card_id)
+            .fetch_one(&write_pool).await.expect("fetch archived flag");
+        assert_eq!(archived, 1, "cards.archived must be 1 after archive");
+
+        // card_events 'archived' entry
+        let event_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM card_events WHERE card_id = ? AND kind = 'archived'"
+        )
+        .bind(&card_id)
+        .fetch_one(&write_pool).await.expect("archived event count");
+        assert_eq!(event_count, 1, "a 'archived' card_event must be logged");
+
+        // Card absent from get_board_inner (get_board filters archived = 0)
+        let board_after = get_board_inner(&write_pool, &board_id, &user_id).await
+            .expect("get_board after archive must succeed");
+        let card_ids_after: Vec<String> = board_after.cards.iter()
+            .map(|c| c.id.clone()).collect();
+        assert!(!card_ids_after.contains(&card_id),
+            "archived card must be absent from get_board_inner");
+    }
 }
