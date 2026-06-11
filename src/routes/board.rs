@@ -25,6 +25,7 @@ use crate::api::card_api::MoveCard;
 use crate::components::board_header::BoardHeader;
 use crate::components::kanban_list::{KanbanList, AddListComposer, EmptyBoardCard};
 use crate::components::create_board_modal::CreateBoardModal;
+use crate::components::reconnect_toast::ReconnectToast;
 
 /// Route params for `/board/:id`.
 #[derive(Params, PartialEq, Clone)]
@@ -390,6 +391,9 @@ pub fn BoardPage() -> impl IntoView {
                                     }
                                     // Card detail modal renders here when /board/:id/card/:card_num is active
                                     <Outlet/>
+
+                                    // Reconnecting toast — shown after 2+ failed reconnect attempts (D-01, RT-02)
+                                    <ReconnectToast/>
                                 }.into_any()
                             }
                         }

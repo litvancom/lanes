@@ -231,10 +231,44 @@ mod tests {
         }
     }
 
-    /// Placeholder for lagged receiver → Refresh behavior (filled by 06-03).
+    /// Proves the slow-client lag condition: when a receiver falls more than 256 messages
+    /// behind (the broadcast channel capacity), tokio returns `RecvError::Lagged`.
+    ///
+    /// This is the unit-level guard for the Lagged→Refresh path (RT-02, Pitfall 2 §749-755):
+    /// the server-side WS handler converts Lagged into a `Refresh` event so the client
+    /// performs a full board re-fetch rather than applying stale deltas.
     #[tokio::test]
     async fn test_lagged_refresh() {
-        // filled in by 06-03
-        assert!(true);
+        use tokio::sync::broadcast::error::RecvError;
+
+        let registry = BoardRoomRegistry::new();
+
+        // Subscribe but do NOT drain — this receiver will fall behind.
+        let mut rx = registry.subscribe("board-lag");
+
+        // Publish more than the channel capacity (256) without draining the receiver.
+        // Each publish increments the per-board sequence number to produce distinct events.
+        for _ in 0..=256 {
+            let seq = registry.next_seq("board-lag");
+            registry.publish(
+                "board-lag",
+                BoardEvent::CardMoved {
+                    board_seq: seq,
+                    client_id: "c-lag".to_string(),
+                    card_id: "card-lag".to_string(),
+                    to_list_id: "list-1".to_string(),
+                    position: "a0".to_string(),
+                },
+            );
+        }
+
+        // The first recv() after falling behind should return Lagged.
+        // tokio broadcast returns Err(RecvError::Lagged(n)) where n is the number of messages
+        // skipped. The handler converts this to a Refresh sent over the WebSocket.
+        let result = rx.recv().await;
+        assert!(
+            matches!(result, Err(RecvError::Lagged(_))),
+            "Expected RecvError::Lagged after overflow, got: {result:?}"
+        );
     }
 }
