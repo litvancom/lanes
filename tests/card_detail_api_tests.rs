@@ -107,6 +107,148 @@ mod card_detail_api_tests {
     }
 
     // -------------------------------------------------------------------------
+    // Mutation tests (RED for TDD Task 3 — update_card_title_inner / update_card_description_inner)
+    // -------------------------------------------------------------------------
+
+    /// Helper: insert a list and card directly for mutation tests.
+    async fn insert_card_direct(
+        pool: &sqlx::SqlitePool,
+        board_id: &str,
+        list_id: &str,
+        title: &str,
+        card_num: i64,
+    ) -> String {
+        use uuid::Uuid;
+        use fractional_index::FractionalIndex;
+        let card_id = Uuid::now_v7().to_string();
+        let pos = FractionalIndex::default().to_string();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        sqlx::query!(
+            r#"INSERT INTO cards (id, list_id, board_id, card_num, title, position,
+               done, archived, checklist_done, checklist_total, comment_count, attachment_count,
+               created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, ?, ?)"#,
+            card_id, list_id, board_id, card_num, title, pos, now, now
+        )
+        .execute(pool)
+        .await
+        .expect("insert card");
+        card_id
+    }
+
+    /// Helper: insert a list directly.
+    async fn insert_list_direct(pool: &sqlx::SqlitePool, board_id: &str, name: &str) -> String {
+        use uuid::Uuid;
+        use fractional_index::FractionalIndex;
+        let list_id = Uuid::now_v7().to_string();
+        let pos = FractionalIndex::default().to_string();
+        sqlx::query!(
+            "INSERT INTO lists (id, board_id, name, position, archived) VALUES (?, ?, ?, ?, 0)",
+            list_id, board_id, name, pos
+        )
+        .execute(pool)
+        .await
+        .expect("insert list");
+        list_id
+    }
+
+    /// update_card_title_inner validates: empty rejected, >500 chars rejected, wrong-board = 0 rows.
+    #[tokio::test]
+    async fn test_update_card_title_validates_and_scopes() {
+        use lanes::api::card_detail_api::update_card_title_inner;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        let user_id = insert_user_direct(&write_pool, "title_owner@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Title Test Board").await;
+        let other_board_id = insert_board_direct(&write_pool, "Other Board").await;
+        insert_member_direct(&write_pool, &board_id, &user_id, "owner").await;
+
+        let list_id = insert_list_direct(&write_pool, &board_id, "Test List").await;
+        let card_id = insert_card_direct(&write_pool, &board_id, &list_id, "Original Title", 1).await;
+
+        // Empty title → Err
+        let result = update_card_title_inner(&write_pool, &board_id, &card_id, "".to_string()).await;
+        assert!(result.is_err(), "empty title must be rejected");
+
+        // Whitespace-only title → Err (trims to empty)
+        let result = update_card_title_inner(&write_pool, &board_id, &card_id, "   ".to_string()).await;
+        assert!(result.is_err(), "whitespace-only title must be rejected");
+
+        // >500 chars → Err
+        let long_title = "a".repeat(501);
+        let result = update_card_title_inner(&write_pool, &board_id, &card_id, long_title).await;
+        assert!(result.is_err(), "title >500 chars must be rejected");
+
+        // Valid update on correct board → Ok
+        let result = update_card_title_inner(&write_pool, &board_id, &card_id, "New Title".to_string()).await;
+        assert!(result.is_ok(), "valid title update must succeed: {:?}", result.err());
+        assert_eq!(result.unwrap(), "New Title");
+
+        // Verify DB row updated
+        let stored: String = sqlx::query_scalar("SELECT title FROM cards WHERE id = ?")
+            .bind(&card_id)
+            .fetch_one(&write_pool)
+            .await
+            .expect("fetch card title");
+        assert_eq!(stored, "New Title", "DB title must match updated value");
+
+        // IDOR scope: same card_id but wrong board_id → affects 0 rows (returns Ok with no change)
+        // update_card_title_inner returns Ok with the trimmed title even if 0 rows were updated
+        // (sqlx::query execute doesn't error on 0 rows affected), but we verify no cross-board write
+        let result = update_card_title_inner(&write_pool, &other_board_id, &card_id, "Injected".to_string()).await;
+        // Should succeed (no DB error) but affect 0 rows
+        if result.is_ok() {
+            let still_stored: String = sqlx::query_scalar("SELECT title FROM cards WHERE id = ?")
+                .bind(&card_id)
+                .fetch_one(&write_pool)
+                .await
+                .expect("fetch card title after cross-board attempt");
+            assert_eq!(still_stored, "New Title", "cross-board title injection must affect 0 rows");
+        }
+    }
+
+    /// update_card_description_inner stores raw markdown — not rendered HTML.
+    #[tokio::test]
+    async fn test_update_card_description_stores_raw_markdown() {
+        use lanes::api::card_detail_api::update_card_description_inner;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        let user_id = insert_user_direct(&write_pool, "desc_owner@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Desc Test Board").await;
+        insert_member_direct(&write_pool, &board_id, &user_id, "owner").await;
+
+        let list_id = insert_list_direct(&write_pool, &board_id, "Desc List").await;
+        let card_id = insert_card_direct(&write_pool, &board_id, &list_id, "Card with Description", 2).await;
+
+        let raw_markdown = "**bold** and _italic_\n\n- item 1\n- item 2";
+
+        let result = update_card_description_inner(
+            &write_pool,
+            &board_id,
+            &card_id,
+            raw_markdown.to_string(),
+        ).await;
+        assert!(result.is_ok(), "description update must succeed: {:?}", result.err());
+
+        // Stored value must be the raw markdown, NOT rendered HTML
+        let stored: Option<String> = sqlx::query_scalar("SELECT description FROM cards WHERE id = ?")
+            .bind(&card_id)
+            .fetch_one(&write_pool)
+            .await
+            .expect("fetch card description");
+
+        let stored_desc = stored.unwrap_or_default();
+        assert_eq!(stored_desc, raw_markdown, "raw markdown must be stored as-is, not rendered HTML");
+        assert!(!stored_desc.contains("<strong>"), "stored value must NOT contain rendered HTML tags");
+        assert!(!stored_desc.contains("<em>"), "stored value must NOT contain rendered HTML tags");
+    }
+
+    // -------------------------------------------------------------------------
     // get_card_detail_inner tests (RED — Task 2 makes these compile and pass)
     // -------------------------------------------------------------------------
 
