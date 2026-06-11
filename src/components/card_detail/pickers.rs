@@ -97,14 +97,35 @@ pub fn LabelPicker(
     let board_labels = StoredValue::new(board_labels);
     let assign_action = ServerAction::<AssignLabel>::new();
     let board_signals: Option<BoardSignals> = use_context::<BoardSignals>();
+    // Snapshot of the card's labels captured at dispatch time, used to revert the
+    // optimistic write if the server action fails (WR-02).
+    let labels_snapshot: RwSignal<Option<Vec<CardLabel>>> = RwSignal::new(None);
+    // Inline error message surfaced when a label mutation fails.
+    let label_error: RwSignal<Option<String>> = RwSignal::new(None);
 
-    // On success: toggle the label in RwSignal<Card>.labels
+    // On error: revert the optimistic write to the snapshot and surface the message (WR-02).
     {
         let bs = board_signals;
         Effect::new(move |_| {
-            if let Some(Ok(())) = assign_action.value().get() {
-                // Write-through happens below via optimistic; action success is a no-op here
-                let _ = bs;
+            if let Some(result) = assign_action.value().get() {
+                match result {
+                    Ok(()) => {
+                        labels_snapshot.set(None);
+                        label_error.set(None);
+                    }
+                    Err(_) => {
+                        if let (Some(bs), Some(prev)) = (bs, labels_snapshot.get_untracked()) {
+                            let key = card_signal_key.get_value();
+                            bs.card_signals.with(|cs| {
+                                if let Some(sig) = cs.get(&key) {
+                                    sig.update(|c: &mut Card| c.labels = prev.clone());
+                                }
+                            });
+                        }
+                        labels_snapshot.set(None);
+                        label_error.set(Some("Couldn't save changes. Try again.".to_string()));
+                    }
+                }
             }
         });
     }
@@ -156,6 +177,16 @@ pub fn LabelPicker(
                                                 .unwrap_or(false);
 
                                             let new_assigned = !currently_assigned;
+
+                                            // Snapshot current labels for revert-on-error (WR-02)
+                                            if let Some(bs) = board_signals {
+                                                let key = card_signal_key.get_value();
+                                                bs.card_signals.with(|cs| {
+                                                    if let Some(sig) = cs.get(&key) {
+                                                        labels_snapshot.set(Some(sig.get().labels.clone()));
+                                                    }
+                                                });
+                                            }
 
                                             // Optimistic write-through to RwSignal<Card>.labels
                                             if let Some(bs) = board_signals {
@@ -220,6 +251,11 @@ pub fn LabelPicker(
                         }).collect_view()
                     })
                 }}
+                {move || label_error.get().map(|msg| view! {
+                    <div style="padding: 4px 10px; font-size: 11px; color: var(--danger, #c0392b)">
+                        {msg}
+                    </div>
+                })}
             </div>
         </Show>
     }
@@ -242,6 +278,36 @@ pub fn DatePicker(
     let card_signal_key = StoredValue::new(card_signal_key);
     let set_due_action = ServerAction::<SetDueDate>::new();
     let board_signals: Option<BoardSignals> = use_context::<BoardSignals>();
+    // Snapshot of due_at at dispatch for revert-on-error (WR-02).
+    let due_snapshot: RwSignal<Option<Option<i64>>> = RwSignal::new(None);
+    let due_error: RwSignal<Option<String>> = RwSignal::new(None);
+
+    // Revert the optimistic due_at write if the server action fails (WR-02).
+    {
+        let bs = board_signals;
+        Effect::new(move |_| {
+            if let Some(result) = set_due_action.value().get() {
+                match result {
+                    Ok(()) => {
+                        due_snapshot.set(None);
+                        due_error.set(None);
+                    }
+                    Err(_) => {
+                        if let (Some(bs), Some(prev)) = (bs, due_snapshot.get_untracked()) {
+                            let key = card_signal_key.get_value();
+                            bs.card_signals.with(|cs| {
+                                if let Some(sig) = cs.get(&key) {
+                                    sig.update(|c: &mut Card| c.due_at = prev);
+                                }
+                            });
+                        }
+                        due_snapshot.set(None);
+                        due_error.set(Some("Couldn't save changes. Try again.".to_string()));
+                    }
+                }
+            }
+        });
+    }
 
     // Current due_at from card signal for controlled input
     let current_date_str = move || {
@@ -285,11 +351,13 @@ pub fn DatePicker(
                                 date_string_to_millis(&val)
                             };
 
-                            // Optimistic write-through to RwSignal<Card>.due_at
+                            // Optimistic write-through to RwSignal<Card>.due_at,
+                            // snapshotting the prior value for revert-on-error (WR-02)
                             if let Some(bs) = board_signals {
                                 let key = card_signal_key.get_value();
                                 bs.card_signals.with(|cs| {
                                     if let Some(sig) = cs.get(&key) {
+                                        due_snapshot.set(Some(sig.get().due_at));
                                         sig.update(|c: &mut Card| {
                                             c.due_at = new_due;
                                         });
@@ -319,6 +387,7 @@ pub fn DatePicker(
                                     let key = card_signal_key.get_value();
                                     bs.card_signals.with(|cs| {
                                         if let Some(sig) = cs.get(&key) {
+                                            due_snapshot.set(Some(sig.get().due_at));
                                             sig.update(|c: &mut Card| c.due_at = None);
                                         }
                                     });
@@ -335,6 +404,11 @@ pub fn DatePicker(
                         "Remove date"
                     </button>
                 </div>
+                {move || due_error.get().map(|msg| view! {
+                    <div style="margin-top: 6px; font-size: 11px; color: var(--danger, #c0392b)">
+                        {msg}
+                    </div>
+                })}
             </div>
         </Show>
     }
@@ -357,6 +431,36 @@ pub fn PriorityPicker(
     let card_signal_key = StoredValue::new(card_signal_key);
     let set_prio_action = ServerAction::<SetPriority>::new();
     let board_signals: Option<BoardSignals> = use_context::<BoardSignals>();
+    // Snapshot of priority at dispatch for revert-on-error (WR-02).
+    let prio_snapshot: RwSignal<Option<Option<String>>> = RwSignal::new(None);
+    let prio_error: RwSignal<Option<String>> = RwSignal::new(None);
+
+    // Revert the optimistic priority write if the server action fails (WR-02).
+    {
+        let bs = board_signals;
+        Effect::new(move |_| {
+            if let Some(result) = set_prio_action.value().get() {
+                match result {
+                    Ok(()) => {
+                        prio_snapshot.set(None);
+                        prio_error.set(None);
+                    }
+                    Err(_) => {
+                        if let (Some(bs), Some(prev)) = (bs, prio_snapshot.get_untracked()) {
+                            let key = card_signal_key.get_value();
+                            bs.card_signals.with(|cs| {
+                                if let Some(sig) = cs.get(&key) {
+                                    sig.update(|c: &mut Card| c.priority = prev.clone());
+                                }
+                            });
+                        }
+                        prio_snapshot.set(None);
+                        prio_error.set(Some("Couldn't save changes. Try again.".to_string()));
+                    }
+                }
+            }
+        });
+    }
 
     let options: &'static [(&'static str, Option<&'static str>)] = &[
         ("P1 · High", Some("P1")),
@@ -399,11 +503,12 @@ pub fn PriorityPicker(
                                 move |ev| {
                                     ev.stop_propagation();
                                     let pv_clone = pv.clone();
-                                    // Optimistic write-through
+                                    // Optimistic write-through, snapshotting prior priority (WR-02)
                                     if let Some(bs) = board_signals {
                                         let key = card_signal_key.get_value();
                                         bs.card_signals.with(|cs| {
                                             if let Some(sig) = cs.get(&key) {
+                                                prio_snapshot.set(Some(sig.get().priority.clone()));
                                                 sig.update(|c: &mut Card| c.priority = pv_clone.clone());
                                             }
                                         });
@@ -442,6 +547,11 @@ pub fn PriorityPicker(
                         </button>
                     }
                 }).collect_view()}
+                {move || prio_error.get().map(|msg| view! {
+                    <div style="padding: 4px 10px; font-size: 11px; color: var(--danger, #c0392b)">
+                        {msg}
+                    </div>
+                })}
             </div>
         </Show>
     }
@@ -468,6 +578,39 @@ pub fn MemberPicker(
     let assign_action = ServerAction::<AssignMember>::new();
     let remove_action = ServerAction::<RemoveMember>::new();
     let board_signals: Option<BoardSignals> = use_context::<BoardSignals>();
+    // Snapshot of member_ids at dispatch for revert-on-error (WR-02).
+    let members_snapshot: RwSignal<Option<Vec<String>>> = RwSignal::new(None);
+    let member_error: RwSignal<Option<String>> = RwSignal::new(None);
+
+    // Revert the optimistic member write if either action fails (WR-02).
+    let revert_members = move || {
+        if let (Some(bs), Some(prev)) = (board_signals, members_snapshot.get_untracked()) {
+            let key = card_signal_key.get_value();
+            bs.card_signals.with(|cs| {
+                if let Some(sig) = cs.get(&key) {
+                    sig.update(|c: &mut Card| c.member_ids = prev.clone());
+                }
+            });
+        }
+        members_snapshot.set(None);
+        member_error.set(Some("Couldn't save changes. Try again.".to_string()));
+    };
+    Effect::new(move |_| {
+        if let Some(result) = assign_action.value().get() {
+            match result {
+                Ok(()) => { members_snapshot.set(None); member_error.set(None); }
+                Err(_) => revert_members(),
+            }
+        }
+    });
+    Effect::new(move |_| {
+        if let Some(result) = remove_action.value().get() {
+            match result {
+                Ok(()) => { members_snapshot.set(None); member_error.set(None); }
+                Err(_) => revert_members(),
+            }
+        }
+    });
 
     view! {
         <Show when=move || show.get()>
@@ -510,12 +653,14 @@ pub fn MemberPicker(
                                                 })
                                                 .unwrap_or(false);
 
-                                            // Optimistic write-through to RwSignal<Card>.member_ids
+                                            // Optimistic write-through to RwSignal<Card>.member_ids,
+                                            // snapshotting prior member_ids for revert-on-error (WR-02)
                                             if let Some(bs) = board_signals {
                                                 let key = card_signal_key.get_value();
                                                 let uid_c = uid2.clone();
                                                 bs.card_signals.with(|cs| {
                                                     if let Some(sig) = cs.get(&key) {
+                                                        members_snapshot.set(Some(sig.get().member_ids.clone()));
                                                         sig.update(|c: &mut Card| {
                                                             if currently_assigned {
                                                                 c.member_ids.retain(|id| id != &uid_c);
@@ -574,6 +719,11 @@ pub fn MemberPicker(
                         }).collect_view()
                     })
                 }}
+                {move || member_error.get().map(|msg| view! {
+                    <div style="padding: 4px 10px; font-size: 11px; color: var(--danger, #c0392b)">
+                        {msg}
+                    </div>
+                })}
             </div>
         </Show>
     }

@@ -54,36 +54,60 @@ pub fn ChecklistSection(
     let add_text = RwSignal::new(String::new());
     let adding = RwSignal::new(false);
 
-    // On toggle_action success: update item in modal signal + write-through card counts (D-15)
+    // Snapshot of the (item_id, applied done) of the in-flight toggle, for revert-on-error (WR-02).
+    let toggle_snapshot: RwSignal<Option<(String, bool)>> = RwSignal::new(None);
+    // Inline error surfaced when a checklist mutation fails.
+    let checklist_error: RwSignal<Option<String>> = RwSignal::new(None);
+
+    // On toggle_action success: write-through authoritative card counts (D-15).
+    // On error: revert the optimistic item flip and surface the message (WR-02).
     {
         let bs = board_signals;
         Effect::new(move |_| {
-            if let Some(Ok((done_flag, done_c, total_c))) = toggle_action.value().get() {
-                // Note: we need the item_id that was dispatched. We derive it from the signal
-                // by finding the item whose state changed most recently. This effect fires
-                // after the dispatch so the optimistic update already applied. The server
-                // returns the authoritative counts — apply those to RwSignal<Card>.
-                let _ = done_flag;
-                if let Some(bs_ref) = bs {
-                    let key = card_signal_key.get_value();
-                    bs_ref.card_signals.with(|cs| {
-                        if let Some(sig) = cs.get(&key) {
-                            sig.update(|c: &mut Card| {
-                                c.checklist_done = done_c;
-                                c.checklist_total = total_c;
+            if let Some(result) = toggle_action.value().get() {
+                match result {
+                    Ok((done_flag, done_c, total_c)) => {
+                        let _ = done_flag;
+                        toggle_snapshot.set(None);
+                        checklist_error.set(None);
+                        if let Some(bs_ref) = bs {
+                            let key = card_signal_key.get_value();
+                            bs_ref.card_signals.with(|cs| {
+                                if let Some(sig) = cs.get(&key) {
+                                    sig.update(|c: &mut Card| {
+                                        c.checklist_done = done_c;
+                                        c.checklist_total = total_c;
+                                    });
+                                }
                             });
                         }
-                    });
+                    }
+                    Err(_) => {
+                        // Revert the optimistic flip on the affected item
+                        if let Some((iid, applied)) = toggle_snapshot.get_untracked() {
+                            checklist_items.update(|items| {
+                                if let Some(i) = items.iter_mut().find(|i| i.id == iid) {
+                                    i.done = !applied;
+                                }
+                            });
+                        }
+                        toggle_snapshot.set(None);
+                        checklist_error.set(Some("Couldn't save changes. Try again.".to_string()));
+                    }
                 }
             }
         });
     }
 
-    // On add_action success: append returned item + write-through card total (D-15)
+    // On add_action success: append returned item + write-through card total (D-15).
+    // The add path is non-optimistic (appends only on success), so an error needs no
+    // revert — just surface the message (WR-02).
     {
         let bs = board_signals;
         Effect::new(move |_| {
-            if let Some(Ok((new_item, done_c, total_c))) = add_action.value().get() {
+            match add_action.value().get() {
+                Some(Ok((new_item, done_c, total_c))) => {
+                checklist_error.set(None);
                 checklist_items.update(|items| items.push(new_item));
                 add_text.set(String::new());
                 adding.set(false);
@@ -98,6 +122,11 @@ pub fn ChecklistSection(
                         }
                     });
                 }
+                }
+                Some(Err(_)) => {
+                    checklist_error.set(Some("Couldn't save changes. Try again.".to_string()));
+                }
+                None => {}
             }
         });
     }
@@ -166,7 +195,9 @@ pub fn ChecklistSection(
                                             move |_| {
                                                 let iid = item_id.get_value();
                                                 let new_done = !is_done;
-                                                // Optimistic: flip item in modal signal
+                                                // Optimistic: flip item in modal signal,
+                                                // recording it for revert-on-error (WR-02)
+                                                toggle_snapshot.set(Some((iid.clone(), new_done)));
                                                 checklist_items.update(|items| {
                                                     if let Some(i) = items.iter_mut().find(|i| i.id == iid) {
                                                         i.done = new_done;
@@ -185,6 +216,7 @@ pub fn ChecklistSection(
                                                 ev.prevent_default();
                                                 let iid = item_id.get_value();
                                                 let new_done = !is_done;
+                                                toggle_snapshot.set(Some((iid.clone(), new_done)));
                                                 checklist_items.update(|items| {
                                                     if let Some(i) = items.iter_mut().find(|i| i.id == iid) {
                                                         i.done = new_done;
@@ -292,6 +324,11 @@ pub fn ChecklistSection(
                         </div>
                     </div>
                 </Show>
+                {move || checklist_error.get().map(|msg| view! {
+                    <div style="margin-top: 6px; font-size: 11px; color: var(--danger, #c0392b)">
+                        {msg}
+                    </div>
+                })}
             </div>
         </Show>
 
