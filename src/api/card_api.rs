@@ -123,13 +123,23 @@ pub async fn move_card_inner(
         sqlx::Error::Decode("invalid position: not a valid fractional index".into())
     })?;
 
-    // 2. Derive done from target list's is_done_list flag (D-14, T-04-10)
-    let target_is_done: bool = sqlx::query_scalar(
-        "SELECT CAST(is_done_list AS BOOLEAN) FROM lists WHERE id = ?"
+    // 2. Resolve the target list's owning board AND is_done_list in a single query.
+    //    The board-membership gate authorizes the caller against the client-supplied
+    //    board_id, but does NOT verify the client-supplied to_list_id belongs to that
+    //    board. Without this check a member of board A could move a card to a list on
+    //    board B, corrupting board/list invariants (CR-01). A single row also avoids a
+    //    TOCTOU window and a second round-trip. (D-14, T-04-10)
+    let (target_board, target_is_done): (String, bool) = sqlx::query_as(
+        "SELECT board_id, CAST(is_done_list AS BOOLEAN) FROM lists WHERE id = ?"
     )
     .bind(to_list_id)
-    .fetch_one(pool)
-    .await?;
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| sqlx::Error::Decode("target list not found".into()))?;
+
+    if target_board != board_id {
+        return Err(sqlx::Error::Decode("target list not on this board".into()));
+    }
 
     // 3. UPDATE scoped by id AND board_id (T-04-11: cross-board card_id matches no row)
     let now = now_millis().map_err(|_| sqlx::Error::Decode("clock error".into()))?;
