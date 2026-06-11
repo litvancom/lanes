@@ -222,9 +222,11 @@ pub fn SidebarColumn(
                         #[cfg(target_arch = "wasm32")]
                         {
                             use wasm_bindgen::JsCast;
+                            // Per-card input id (WR-07) — must match AttachmentsSection's derived id
+                            let input_id = format!("card-attachment-input-{}", card_id_sv.get_value());
                             if let Some(window) = leptos::web_sys::window() {
                                 if let Some(doc) = window.document() {
-                                    if let Some(el) = doc.get_element_by_id("card-attachment-input") {
+                                    if let Some(el) = doc.get_element_by_id(&input_id) {
                                         if let Ok(input) = el.dyn_into::<leptos::web_sys::HtmlElement>() {
                                             let _ = input.click();
                                         }

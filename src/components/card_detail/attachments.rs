@@ -46,9 +46,11 @@ pub fn AttachmentsSection(
     let upload_error: RwSignal<Option<String>> = RwSignal::new(None);
 
     // The file input is placed inline; the sidebar "Attachment" button dispatches a click to it
-    // via the data-attachment-input attribute used by the sidebar click handler.
-    // Using a stable HTML id so the sidebar button can `document.getElementById(id).click()`.
-    let file_input_id = "card-attachment-input";
+    // via document.getElementById(id).click().
+    // Derive the id from card_id (WR-07) so it is unique per card — a hardcoded id would
+    // collide if two card-detail modals are ever mounted (e.g. during route transitions),
+    // causing the sidebar trigger to target the wrong card's input.
+    let file_input_id = format!("card-attachment-input-{}", card_id.get_value());
 
     view! {
         // Section hidden when no attachments AND no upload in progress (UI-SPEC line 357)
