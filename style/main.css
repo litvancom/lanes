@@ -2428,3 +2428,279 @@ input, textarea {
   background: var(--bg-subtle);
   flex-shrink: 0;
 }
+
+/* =====================================================================
+   Card Detail Modal — Phase 5 (Plan 02)
+   Ported 1:1 from design-ref/design_handoff_lanes_kanban/design/src/styles.css
+   Width override: .lns-card-modal overrides .lns-modal-content (480px → 760px).
+   The existing .lns-modal-content (Phase-3 create-board modal) is NOT modified.
+   ===================================================================== */
+
+/* Card-modal width / positioning override */
+.lns-card-modal .lns-modal-content,
+.lns-modal-content:has(.lns-modal-cover) {
+  width: 760px;
+  max-width: calc(100% - 64px);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  max-height: calc(100% - 96px);
+  overflow: hidden;
+  padding: 0;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* Backdrop padding-top pushes modal 64px from top (from design) */
+.lns-modal-backdrop:has(+ .lns-modal-content .lns-modal-cover) {
+  /* backdrop already covers full screen; visual spacing is from modal positioning */
+}
+
+/* ---- Cover band ---- */
+.lns-modal-cover {
+  height: 120px;
+  background: var(--bg-subtle);
+  background-size: cover;
+  background-position: center;
+  position: relative;
+}
+
+/* Close button — 28px circle at top-right of cover */
+.lns-modal-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+.lns-modal-close:hover { background: white; }
+
+/* ---- Body grid: 1fr 200px ---- */
+.lns-modal-body {
+  display: grid;
+  grid-template-columns: 1fr 200px;
+  gap: 24px;
+  padding: 20px 24px 24px;
+  overflow-y: auto;
+  max-height: calc(100vh - 120px - 96px);
+}
+
+/* ---- Main column ---- */
+.lns-modal-main { display: flex; flex-direction: column; gap: 20px; }
+
+/* ---- Section headers ---- */
+.lns-modal-section h4 {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin: 0 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ---- Card modal title (20px/700, overrides Phase-3 .lns-modal-title) ---- */
+.lns-modal-body .lns-modal-title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  margin: 0 0 4px;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+/* Title edit input */
+.lns-modal-title-input {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-xs);
+  padding: 2px 6px;
+  width: 100%;
+  background: var(--bg-elevated);
+  outline: none;
+  font-family: var(--font-sans);
+}
+
+/* ---- Breadcrumb ---- */
+.lns-modal-breadcrumb {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ---- Description ---- */
+.lns-modal-desc {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.lns-modal-desc-editor {
+  width: 100%;
+  min-height: 80px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+}
+.lns-modal-desc-editor:focus {
+  border-color: var(--accent);
+}
+
+/* ---- Checklist ---- */
+.lns-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lns-checklist-bar {
+  height: 4px;
+  background: var(--bg-subtle);
+  border-radius: 2px;
+  margin: 6px 0 10px;
+  overflow: hidden;
+}
+.lns-checklist-bar > div {
+  height: 100%;
+  background: var(--success);
+  transition: width .2s;
+}
+
+.lns-checklist-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  font-size: 13px;
+}
+.lns-checklist-item:hover { background: var(--bg-subtle); }
+
+.lns-checklist-item .lns-check {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1.5px solid var(--border-strong);
+  flex-shrink: 0;
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-elevated);
+}
+.lns-checklist-item.done .lns-check {
+  background: var(--success);
+  border-color: var(--success);
+  color: white;
+}
+.lns-checklist-item.done span { color: var(--text-faint); text-decoration: line-through; }
+
+/* ---- Sidebar ---- */
+.lns-modal-sidebar { display: flex; flex-direction: column; gap: 14px; }
+.lns-modal-sidebar .group { display: flex; flex-direction: column; gap: 6px; }
+.lns-modal-sidebar .group .lns-btn {
+  justify-content: flex-start;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ---- Activity feed ---- */
+.lns-activity { display: flex; flex-direction: column; gap: 10px; }
+.lns-activity-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.lns-activity-body {
+  flex: 1;
+  background: var(--bg-subtle);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.lns-activity-author {
+  font-weight: 600;
+  font-size: 12px;
+  margin-bottom: 2px;
+  color: var(--text);
+}
+.lns-activity-time {
+  color: var(--text-faint);
+  font-weight: 400;
+  margin-left: 6px;
+  font-size: 11px;
+}
+
+/* Avatar MD size (28px) for activity and modal header */
+.lns-avatar--md {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--bg-subtle);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: white;
+}
+
+/* Avatar LG size (36px) */
+.lns-avatar--lg {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg-subtle);
+  flex-shrink: 0;
+}
+
+/* Loading state for card modal */
+.lns-modal-loading {
+  padding: 24px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* ---- Card modal: override .lns-modal-content for 760px width ---- */
+/* Applied via class on a wrapper or via specificity — the modal content containing
+   a .lns-modal-cover child should be 760px wide per D-03 */
+.lns-modal-content:has(> .lns-modal-cover) {
+  width: 760px;
+  max-width: calc(100% - 64px);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  max-height: calc(100% - 96px);
+  overflow: hidden;
+  padding: 0;
+}

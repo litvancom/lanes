@@ -81,6 +81,24 @@ pub fn Icon(
         // X — for composer close
         "x" => r#"<path d="M3 3l10 10M13 3L3 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>"#,
 
+        // Close (same as x, used in modal close button)
+        "close" => r#"<path d="M3 3l10 10M13 3L3 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>"#,
+
+        // List — three horizontal lines with bullets
+        "list" => r#"<path d="M2.5 4h11M2.5 8h11M2.5 12h11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>"#,
+
+        // File / document
+        "file" => r#"<path d="M3 2h7l3 3v9a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 2v4h3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>"#,
+
+        // Flag — for priority
+        "flag" => r#"<path d="M3 2v12M3 2h9l-2.5 4L13 10H3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>"#,
+
+        // Eye — for watch action
+        "eye" => r#"<path d="M1.5 8s2.5-5 6.5-5 6.5 5 6.5 5-2.5 5-6.5 5-6.5-5-6.5-5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/>"#,
+
+        // Move-to arrow — for move action
+        "moveTo" => r#"<path d="M2 8h12M9 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>"#,
+
         // Unknown glyph — transparent placeholder (same dimensions)
         _ => "",
     };

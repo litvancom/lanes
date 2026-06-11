@@ -296,7 +296,128 @@ pub async fn get_card_detail_inner(
 }
 
 // ---------------------------------------------------------------------------
-// Server function wrapper
+// Mutation inner functions (SSR-only)
+// ---------------------------------------------------------------------------
+
+/// Internal: update a card's title.
+///
+/// Security: UPDATE scoped by `id AND board_id` — cross-board card_id matches 0 rows (T-05-04).
+/// Validation: trim + reject empty / >500 chars (T-05-05, mirrors create_card_inner).
+#[cfg(feature = "ssr")]
+pub async fn update_card_title_inner(
+    pool: &sqlx::SqlitePool,
+    board_id: &str,
+    card_id: &str,
+    title: String,
+) -> Result<String, sqlx::Error> {
+    use crate::server::now_millis;
+
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        return Err(sqlx::Error::Decode("Card title cannot be empty".into()));
+    }
+    if title.chars().count() > 500 {
+        return Err(sqlx::Error::Decode("Card title must be 500 characters or fewer".into()));
+    }
+
+    let now = now_millis().map_err(|_| sqlx::Error::Decode("clock error".into()))?;
+
+    sqlx::query(
+        "UPDATE cards SET title = ?, updated_at = ? WHERE id = ? AND board_id = ?",
+    )
+    .bind(&title)
+    .bind(now)
+    .bind(card_id)
+    .bind(board_id)
+    .execute(pool)
+    .await?;
+
+    Ok(title)
+}
+
+/// Internal: update a card's description (raw markdown stored — rendered on read, T-05-06).
+///
+/// Security: UPDATE scoped by `id AND board_id` (T-05-04).
+/// Raw markdown is stored; never store rendered HTML (re-render on read via render_markdown).
+#[cfg(feature = "ssr")]
+pub async fn update_card_description_inner(
+    pool: &sqlx::SqlitePool,
+    board_id: &str,
+    card_id: &str,
+    description: String,
+) -> Result<(), sqlx::Error> {
+    use crate::server::now_millis;
+
+    let now = now_millis().map_err(|_| sqlx::Error::Decode("clock error".into()))?;
+
+    sqlx::query(
+        "UPDATE cards SET description = ?, updated_at = ? WHERE id = ? AND board_id = ?",
+    )
+    .bind(&description)
+    .bind(now)
+    .bind(card_id)
+    .bind(board_id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Server function wrappers — mutations
+// ---------------------------------------------------------------------------
+
+/// Update a card's title (auth-guarded, board-member-scoped).
+///
+/// Validates: non-empty, ≤500 chars.
+/// IDOR scope: UPDATE WHERE id = ? AND board_id = ? (T-05-04).
+#[server]
+pub async fn update_card_title(
+    board_id: String,
+    card_id: String,
+    title: String,
+) -> Result<String, ServerFnError> {
+    use crate::auth::helpers::require_board_member;
+    use crate::server::state::AppState;
+
+    let state = expect_context::<AppState>();
+
+    require_board_member(&board_id, &state.read_pool.0).await?;
+
+    update_card_title_inner(&state.write_pool.0, &board_id, &card_id, title)
+        .await
+        .map_err(|e| {
+            tracing::error!("update_card_title error: {e}");
+            ServerFnError::new("Couldn't save changes. Try again.")
+        })
+}
+
+/// Update a card's description (stores raw markdown; render_markdown is applied on read).
+///
+/// Auth-guarded. IDOR scope: UPDATE WHERE id = ? AND board_id = ? (T-05-04).
+#[server]
+pub async fn update_card_description(
+    board_id: String,
+    card_id: String,
+    description: String,
+) -> Result<(), ServerFnError> {
+    use crate::auth::helpers::require_board_member;
+    use crate::server::state::AppState;
+
+    let state = expect_context::<AppState>();
+
+    require_board_member(&board_id, &state.read_pool.0).await?;
+
+    update_card_description_inner(&state.write_pool.0, &board_id, &card_id, description)
+        .await
+        .map_err(|e| {
+            tracing::error!("update_card_description error: {e}");
+            ServerFnError::new("Couldn't save changes. Try again.")
+        })
+}
+
+// ---------------------------------------------------------------------------
+// Server function wrapper — read
 // ---------------------------------------------------------------------------
 
 /// Fetch full card detail for a board member.
