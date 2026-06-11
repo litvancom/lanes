@@ -1066,6 +1066,135 @@ mod card_detail_api_tests {
         assert_eq!(count_dupe_unwatch, 0, "watcher count must still be 0 after duplicate unwatch");
     }
 
+    // -------------------------------------------------------------------------
+    // list_move_targets_inner tests (gap-fix: Move popover dropdowns)
+    // -------------------------------------------------------------------------
+
+    /// Helper: insert a list with a custom position string (avoids UNIQUE(board_id, position) collision).
+    async fn insert_list_with_pos(pool: &sqlx::SqlitePool, board_id: &str, name: &str, pos: &str) -> String {
+        use uuid::Uuid;
+        let list_id = Uuid::now_v7().to_string();
+        sqlx::query!(
+            "INSERT INTO lists (id, board_id, name, position, archived) VALUES (?, ?, ?, ?, 0)",
+            list_id, board_id, name, pos
+        )
+        .execute(pool)
+        .await
+        .expect("insert list with pos");
+        list_id
+    }
+
+    /// list_move_targets_inner returns only boards the user is a member of,
+    /// each with their non-archived lists.
+    #[tokio::test]
+    async fn test_list_move_targets_returns_only_user_boards() {
+        use lanes::api::card_detail_api::list_move_targets_inner;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        let user_a = insert_user_direct(&write_pool, "move_targets_a@test.com").await;
+        let user_b = insert_user_direct(&write_pool, "move_targets_b@test.com").await;
+
+        let board_a = insert_board_direct(&write_pool, "Board A Move").await;
+        let board_b = insert_board_direct(&write_pool, "Board B Move").await;
+        let board_c = insert_board_direct(&write_pool, "Board C Move").await;
+
+        // user_a is a member of board_a and board_b (but NOT board_c)
+        insert_member_direct(&write_pool, &board_a, &user_a, "owner").await;
+        insert_member_direct(&write_pool, &board_b, &user_a, "member").await;
+        insert_member_direct(&write_pool, &board_c, &user_b, "owner").await;
+
+        // Use distinct positions to avoid UNIQUE(board_id, position) constraint
+        let _list_a1 = insert_list_with_pos(&write_pool, &board_a, "List A1", "a0").await;
+        let _list_a2 = insert_list_with_pos(&write_pool, &board_a, "List A2", "a1").await;
+        let _list_b1 = insert_list_with_pos(&write_pool, &board_b, "List B1", "a0").await;
+
+        let targets = list_move_targets_inner(&write_pool, &user_a)
+            .await
+            .expect("list_move_targets_inner must succeed");
+
+        // Must return exactly board_a and board_b (user_a is a member of those)
+        let board_ids: Vec<&str> = targets.iter().map(|b| b.id.as_str()).collect();
+        assert!(board_ids.contains(&board_a.as_str()), "board_a must be in targets (user_a is a member)");
+        assert!(board_ids.contains(&board_b.as_str()), "board_b must be in targets (user_a is a member)");
+        assert!(!board_ids.contains(&board_c.as_str()), "board_c must NOT be in targets (user_a is not a member)");
+
+        // board_a must have 2 lists
+        let board_a_entry = targets.iter().find(|b| b.id == board_a).expect("board_a must be present");
+        assert_eq!(board_a_entry.lists.len(), 2, "board_a must have 2 non-archived lists");
+
+        // board_b must have 1 list
+        let board_b_entry = targets.iter().find(|b| b.id == board_b).expect("board_b must be present");
+        assert_eq!(board_b_entry.lists.len(), 1, "board_b must have 1 non-archived list");
+    }
+
+    /// list_move_targets_inner excludes archived boards and archived lists.
+    #[tokio::test]
+    async fn test_list_move_targets_excludes_archived() {
+        use lanes::api::card_detail_api::list_move_targets_inner;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        let user = insert_user_direct(&write_pool, "move_targets_arch@test.com").await;
+
+        // Active board
+        let active_board = insert_board_direct(&write_pool, "Active Board").await;
+        // Archived board — insert directly (insert_board_direct always inserts non-archived)
+        let archived_board_id = {
+            use uuid::Uuid;
+            let id = Uuid::now_v7().to_string();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64;
+            sqlx::query!(
+                r#"INSERT INTO boards (id, name, key_prefix, color, starred, archived, created_at, updated_at)
+                   VALUES (?, 'Archived Board', 'ARCH', '#aaa', 0, 1, ?, ?)"#,
+                id, now, now
+            )
+            .execute(&write_pool)
+            .await
+            .expect("insert archived board");
+            id
+        };
+
+        insert_member_direct(&write_pool, &active_board, &user, "owner").await;
+        insert_member_direct(&write_pool, &archived_board_id, &user, "member").await;
+
+        // Active board has one active list and one archived list (distinct positions)
+        let _active_list = insert_list_with_pos(&write_pool, &active_board, "Active List", "a0").await;
+        let archived_list_id = {
+            use uuid::Uuid;
+            let id = Uuid::now_v7().to_string();
+            sqlx::query!(
+                "INSERT INTO lists (id, board_id, name, position, archived) VALUES (?, ?, 'Archived List', 'a1', 1)",
+                id, active_board
+            )
+            .execute(&write_pool)
+            .await
+            .expect("insert archived list");
+            id
+        };
+        let _ = archived_list_id;
+
+        let targets = list_move_targets_inner(&write_pool, &user)
+            .await
+            .expect("list_move_targets_inner must succeed");
+
+        // Archived board must not appear
+        let board_ids: Vec<&str> = targets.iter().map(|b| b.id.as_str()).collect();
+        assert!(!board_ids.contains(&archived_board_id.as_str()),
+            "archived board must be excluded from move targets");
+
+        // Active board must appear with only its non-archived list
+        let active_entry = targets.iter().find(|b| b.id == active_board)
+            .expect("active board must be in targets");
+        assert_eq!(active_entry.lists.len(), 1,
+            "active board must have exactly 1 list (the archived list is excluded)");
+        assert_eq!(active_entry.lists[0].name, "Active List",
+            "only the active list must be returned");
+    }
+
     /// archive_card_inner sets archived=1 scoped by id AND board_id,
     /// logs a card_events 'archived' entry, and the card is absent from get_board_inner.
     #[tokio::test]

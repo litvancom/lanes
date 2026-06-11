@@ -146,6 +146,28 @@ pub struct Attachment {
     pub created_at: i64,
 }
 
+// ---------------------------------------------------------------------------
+// Phase 5 gap-fix: Move popover target DTOs
+// ---------------------------------------------------------------------------
+
+/// A list shown in the Move popover's list selector for a given board.
+/// Excludes archived lists.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct MoveTargetList {
+    pub id: String,
+    pub name: String,
+}
+
+/// A board shown in the Move popover's board selector.
+/// Only boards the current user is a member of; excludes archived boards.
+/// Includes the board's non-archived lists.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct MoveTargetBoard {
+    pub id: String,
+    pub name: String,
+    pub lists: Vec<MoveTargetList>,
+}
+
 /// Full card detail payload returned by `get_card_detail`.
 /// Consumed by the card-detail modal and all Phase 5 slices.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

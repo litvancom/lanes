@@ -10,27 +10,12 @@
 //! Footer: `#LANES-C{card_num}` in JetBrains Mono + "Watching · {n} watchers" / "Watch · {n} watchers"
 
 use leptos::prelude::*;
-use crate::models::UserSummary;
+use crate::models::{UserSummary, MoveTargetBoard};
 use crate::routes::board::BoardSignals;
-use crate::api::card_detail_api::{WatchCard, ArchiveCard, MoveCardCrossBoard};
+use crate::api::card_detail_api::{WatchCard, ArchiveCard, MoveCardCrossBoard, list_move_targets};
 use crate::api::card_api::MoveCard;
 use crate::components::icon::Icon;
 use crate::components::card_detail::pickers::{LabelPicker, DatePicker, PriorityPicker, MemberPicker};
-
-/// List summary for the move popover (board_id, list_id, list_name).
-#[derive(Clone, PartialEq)]
-struct ListSummary {
-    pub id: String,
-    pub name: String,
-}
-
-/// Board summary for the move popover.
-#[derive(Clone, PartialEq)]
-struct BoardSummary {
-    pub id: String,
-    pub name: String,
-    pub lists: Vec<ListSummary>,
-}
 
 /// Sidebar column: "Add to card" + "Actions" groups + footer.
 ///
@@ -69,14 +54,13 @@ pub fn SidebarColumn(
 
     // ---- Move action state ----
     let show_move_popover = RwSignal::new(false);
-    // For v1 simplicity: same-board move uses a list selector; cross-board uses the board input
-    // The popover shows: "Board" text field (for cross-board or current board) + "List" selector
-    // Since loading all boards via Resource is complex in a sidebar popover, we use a minimal
-    // implementation: provide the current board's lists via a local resource, and allow the
-    // user to switch to a different board by typing the board ID (v1 approach, no search yet).
-    //
-    // For same-board: dispatch `MoveCard` (Phase 4 fractional move).
-    // For cross-board: dispatch `MoveCardCrossBoard`.
+
+    // Load move targets (user's boards + their lists) once, lazily when the popover opens.
+    // Using Resource::new with a static key — the server fn is auth-gated and returns the
+    // current user's accessible boards only (no archived boards/lists).
+    let move_targets: Resource<Vec<MoveTargetBoard>> =
+        Resource::new(|| (), |_| async { list_move_targets().await.unwrap_or_default() });
+
     let move_target_board_id = RwSignal::new(board_id.clone());
     let move_target_list_id = RwSignal::new(list_id.clone());
     // cross-board flag (target board != current board)
@@ -274,29 +258,73 @@ pub fn SidebarColumn(
                     </button>
                     <Show when=move || show_move_popover.get()>
                         <div class="lns-action-popover">
+                            // Board selector
                             <div class="lns-action-popover-row">
                                 <label class="lns-action-popover-label">"Board"</label>
-                                <input
-                                    class="lns-action-popover-input"
-                                    type="text"
-                                    placeholder="Board ID"
-                                    prop:value=move || move_target_board_id.get()
-                                    on:input=move |ev| {
-                                        move_target_board_id.set(event_target_value(&ev));
-                                    }
-                                />
+                                <Suspense fallback=move || view! { <select class="lns-action-popover-input" disabled=true><option>"Loading…"</option></select> }>
+                                    {move || {
+                                        let boards = move_targets.get().unwrap_or_default();
+                                        let current_sel = move_target_board_id.get();
+                                        view! {
+                                            <select
+                                                class="lns-action-popover-input"
+                                                prop:value=current_sel.clone()
+                                                on:change=move |ev| {
+                                                    let new_board = event_target_value(&ev);
+                                                    // When board changes, reset list to first list of that board
+                                                    let boards_snap = move_targets.get().unwrap_or_default();
+                                                    let first_list = boards_snap
+                                                        .iter()
+                                                        .find(|b| b.id == new_board)
+                                                        .and_then(|b| b.lists.first())
+                                                        .map(|l| l.id.clone())
+                                                        .unwrap_or_default();
+                                                    move_target_board_id.set(new_board);
+                                                    move_target_list_id.set(first_list);
+                                                }
+                                            >
+                                                {boards.into_iter().map(|b| {
+                                                    let selected = b.id == current_sel;
+                                                    view! {
+                                                        <option value=b.id.clone() selected=selected>{b.name}</option>
+                                                    }
+                                                }).collect::<Vec<_>>()}
+                                            </select>
+                                        }
+                                    }}
+                                </Suspense>
                             </div>
+                            // List selector — options depend on the selected board
                             <div class="lns-action-popover-row">
-                                <label class="lns-action-popover-label">"List ID"</label>
-                                <input
-                                    class="lns-action-popover-input"
-                                    type="text"
-                                    placeholder="List ID"
-                                    prop:value=move || move_target_list_id.get()
-                                    on:input=move |ev| {
-                                        move_target_list_id.set(event_target_value(&ev));
-                                    }
-                                />
+                                <label class="lns-action-popover-label">"List"</label>
+                                <Suspense fallback=move || view! { <select class="lns-action-popover-input" disabled=true><option>"Loading…"</option></select> }>
+                                    {move || {
+                                        let boards = move_targets.get().unwrap_or_default();
+                                        let sel_board = move_target_board_id.get();
+                                        let sel_list = move_target_list_id.get();
+                                        let lists = boards
+                                            .iter()
+                                            .find(|b| b.id == sel_board)
+                                            .map(|b| b.lists.clone())
+                                            .unwrap_or_default();
+                                        view! {
+                                            <select
+                                                class="lns-action-popover-input"
+                                                prop:value=sel_list.clone()
+                                                on:change=move |ev| {
+                                                    move_target_list_id.set(event_target_value(&ev));
+                                                }
+                                            >
+                                                {lists.into_iter().map(|l| {
+                                                    let selected = l.id == sel_list;
+                                                    view! {
+                                                        <option value=l.id.clone() selected=selected>{l.name}</option>
+                                                    }
+                                                }).collect::<Vec<_>>()}
+                                            </select>
+                                        }
+                                    }}
+                                </Suspense>
                             </div>
                             // Cross-board data-loss warning (Copywriting Contract, D-05)
                             <Show when=is_cross_board>

@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use crate::models::{Card, CardDetail, ChecklistItem, ActivityEntry, Attachment, UserSummary, CardLabel};
+use crate::models::{Card, CardDetail, ChecklistItem, ActivityEntry, Attachment, UserSummary, CardLabel, MoveTargetList, MoveTargetBoard};
 
 // ---------------------------------------------------------------------------
 // SSR-only markdown sanitization helper
@@ -1572,4 +1572,79 @@ pub async fn record_attachment_inner(
         uploader_id: uploader_id.to_string(),
         created_at: now,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Move popover: list_move_targets_inner + server fn (read path only)
+// ---------------------------------------------------------------------------
+
+/// Internal: return every board the `user_id` is a member of, each with its
+/// non-archived lists, for the Move popover selectors.
+///
+/// Security:
+/// - Only boards where `board_members.user_id = user_id` are returned.
+/// - Archived boards (`boards.archived = 1`) are excluded.
+/// - Archived lists (`lists.archived = 1`) are excluded.
+/// - No board that the user cannot see is returned (authorization scope).
+#[cfg(feature = "ssr")]
+pub async fn list_move_targets_inner(
+    pool: &sqlx::SqlitePool,
+    user_id: &str,
+) -> Result<Vec<MoveTargetBoard>, sqlx::Error> {
+    // Fetch non-archived boards the user is a member of
+    let boards_raw: Vec<(String, String)> = sqlx::query_as(
+        r#"SELECT b.id, b.name
+           FROM boards b
+           JOIN board_members bm ON bm.board_id = b.id
+           WHERE bm.user_id = ? AND b.archived = 0
+           ORDER BY b.name ASC"#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut result: Vec<MoveTargetBoard> = Vec::with_capacity(boards_raw.len());
+
+    for (board_id, board_name) in boards_raw {
+        let lists_raw: Vec<(String, String)> = sqlx::query_as(
+            r#"SELECT id, name
+               FROM lists
+               WHERE board_id = ? AND archived = 0
+               ORDER BY position ASC"#,
+        )
+        .bind(&board_id)
+        .fetch_all(pool)
+        .await?;
+
+        let lists: Vec<MoveTargetList> = lists_raw
+            .into_iter()
+            .map(|(id, name)| MoveTargetList { id, name })
+            .collect();
+
+        result.push(MoveTargetBoard { id: board_id, name: board_name, lists });
+    }
+
+    Ok(result)
+}
+
+/// Return move targets for the current authenticated user.
+///
+/// Auth: requires an authenticated user session. Returns only boards the user
+/// is a member of (archived boards and archived lists excluded).
+///
+/// Read-only: uses `read_pool`.
+#[server]
+pub async fn list_move_targets() -> Result<Vec<MoveTargetBoard>, ServerFnError> {
+    use crate::auth::helpers::require_user;
+    use crate::server::state::AppState;
+
+    let state = expect_context::<AppState>();
+    let user = require_user().await?;
+
+    list_move_targets_inner(&state.read_pool.0, &user.id)
+        .await
+        .map_err(|e| {
+            tracing::error!("list_move_targets error: {e}");
+            ServerFnError::new("Failed to load move targets")
+        })
 }
