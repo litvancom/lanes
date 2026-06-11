@@ -278,6 +278,17 @@ pub async fn get_card_detail_inner(
     // -----------------------------------------------------------------------
     // 10. Assemble and return CardDetail
     // -----------------------------------------------------------------------
+    // Breadcrumb context: list name + board name (UI-SPEC §242 — "in list {list} · {board}").
+    let (list_name, board_name): (String, String) = sqlx::query_as(
+        r#"SELECT l.name, b.name
+           FROM lists l
+           JOIN boards b ON b.id = l.board_id
+           WHERE l.id = ?"#,
+    )
+    .bind(&list_id)
+    .fetch_one(pool)
+    .await?;
+
     let card = Card {
         id: card_id,
         list_id,
@@ -300,6 +311,8 @@ pub async fn get_card_detail_inner(
 
     Ok(CardDetail {
         card,
+        list_name,
+        board_name,
         description_html,
         checklist_items,
         activity,

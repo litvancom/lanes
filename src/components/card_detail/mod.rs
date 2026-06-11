@@ -161,6 +161,9 @@ pub fn CardDetailModal(
                         let is_watching = RwSignal::new(data.is_watching);
                         let board_members = StoredValue::new(data.board_members.clone());
                         let board_labels = StoredValue::new(data.board_labels.clone());
+                        // Breadcrumb context (UI-SPEC §242: "in list {list} · {board}")
+                        let list_name_sv = StoredValue::new(data.list_name.clone());
+                        let board_name_sv = StoredValue::new(data.board_name.clone());
 
                         // Modal-scoped checklist_items signal (seeded from CardDetail)
                         let checklist_items: RwSignal<Vec<ChecklistItem>> =
@@ -224,8 +227,12 @@ pub fn CardDetailModal(
                                         <div>
                                             <div class="lns-modal-breadcrumb">
                                                 <Icon name="list"/>
-                                                " in list —"
-                                                " · —"
+                                                "in list"
+                                                <span style="font-weight: 600">
+                                                    {move || list_name_sv.get_value()}
+                                                </span>
+                                                "·"
+                                                {move || board_name_sv.get_value()}
                                             </div>
 
                                             // Title: view or edit mode

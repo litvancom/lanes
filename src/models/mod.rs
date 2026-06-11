@@ -152,6 +152,10 @@ pub struct Attachment {
 pub struct CardDetail {
     /// The card itself (with labels, member_ids, denormalized counts).
     pub card: Card,
+    /// Name of the list the card belongs to (breadcrumb — UI-SPEC §242).
+    pub list_name: String,
+    /// Name of the board the card belongs to (breadcrumb — UI-SPEC §242).
+    pub board_name: String,
     /// Card description rendered from Markdown through ammonia (pre-sanitized HTML).
     pub description_html: String,
     /// Checklist items for this card, ordered by position ASC.
