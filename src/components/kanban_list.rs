@@ -701,28 +701,38 @@ pub fn AddCardComposer(
     Effect::new(move |_| {
         match create_action.value().get() {
             Some(Ok(card)) => {
-                // Server confirmed: update the optimistic card signal with real data
+                // Server confirmed: reconcile the optimistic card with real data.
+                // Reuse the SAME RwSignal under the real id rather than removing the
+                // temp entry and inserting a fresh signal — a fresh signal detaches the
+                // <For> row keyed on the temp id and forces a full re-mount/flicker of
+                // the card on every successful create (WR-06).
                 let real_id = card.id.clone();
                 board_signals.card_signals.update(|cs| {
-                    // Replace optimistic entry if it exists, or update with real card
                     if let Some(opt_id) = optimistic_id.get_untracked() {
-                        if opt_id != real_id {
-                            // Remove old optimistic entry, add real one
-                            cs.remove(&opt_id);
-                        }
-                        // Update with confirmed server data
-                        if let Some(sig) = cs.get(&real_id) {
-                            sig.set(card.clone());
+                        // Move the existing temp signal to the real id (or take the
+                        // already-real signal), then set it to the confirmed card data.
+                        let sig = if opt_id != real_id {
+                            cs.remove(&opt_id)
                         } else {
-                            cs.insert(real_id.clone(), RwSignal::new(card.clone()));
-                        }
-                        // Fix list_cards too if id changed
+                            cs.get(&real_id).copied()
+                        };
+                        let sig = sig.unwrap_or_else(|| RwSignal::new(card.clone()));
+                        sig.set(card.clone());
+                        cs.insert(real_id.clone(), sig);
+
+                        // Re-key list_cards in place: replace the temp id with the real
+                        // id at the same position so <For> sees a stable signal.
                         if opt_id != real_id {
                             let lid = list_id_sv.get_value();
                             board_signals.list_cards.update(|m| {
                                 if let Some(ids) = m.get_mut(&lid) {
-                                    ids.retain(|id| id != &opt_id);
-                                    if !ids.contains(&real_id) {
+                                    if let Some(pos) = ids.iter().position(|id| id == &opt_id) {
+                                        if ids.contains(&real_id) {
+                                            ids.remove(pos);
+                                        } else {
+                                            ids[pos] = real_id.clone();
+                                        }
+                                    } else if !ids.contains(&real_id) {
                                         ids.push(real_id.clone());
                                     }
                                 }
