@@ -232,6 +232,13 @@ pub async fn create_card(
 /// Re-validates position string (T-04-09 — double validation mirrors reorder_list).
 /// Does NOT accept a `done` parameter — done is server-derived from is_done_list (T-04-10).
 /// UPDATE scoped by card_id AND board_id (T-04-11).
+/// Verifies the target list belongs to the authorized board (CR-01) before writing.
+///
+/// Note (WR-05): the server validates the fractional position string but does NOT
+/// validate that `new_position` is consistent with the target list's neighbor ordering.
+/// Intra-list ordering is intentionally client-trusted (by-design for fractional
+/// indexing); with the target-list/board check above, a client can only reorder within
+/// lists it is authorized to mutate.
 #[server]
 pub async fn move_card(
     board_id: String,
