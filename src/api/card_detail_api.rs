@@ -339,11 +339,25 @@ pub async fn get_card_detail_inner(
 #[cfg(feature = "ssr")]
 pub async fn toggle_checklist_item_inner(
     pool: &sqlx::SqlitePool,
+    board_id: &str,
     card_id: &str,
     item_id: &str,
     done: bool,
 ) -> Result<(bool, i64, i64), sqlx::Error> {
     let mut tx = pool.begin().await?;
+
+    // Bind card_id to board_id (WR-08): wrapper only checks membership of the passed
+    // board_id; verify the card is actually on that board before mutating counts.
+    let card_on_board: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM cards WHERE id = ? AND board_id = ?",
+    )
+    .bind(card_id)
+    .bind(board_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if card_on_board.is_none() {
+        return Err(sqlx::Error::Decode("card not on board".into()));
+    }
 
     sqlx::query("UPDATE checklist_items SET done = ? WHERE id = ?")
         .bind(done as i64)
@@ -381,6 +395,7 @@ pub async fn toggle_checklist_item_inner(
 #[cfg(feature = "ssr")]
 pub async fn add_checklist_item_inner(
     pool: &sqlx::SqlitePool,
+    board_id: &str,
     card_id: &str,
     text: String,
 ) -> Result<(crate::models::ChecklistItem, i64, i64), sqlx::Error> {
@@ -393,6 +408,19 @@ pub async fn add_checklist_item_inner(
     }
 
     let mut tx = pool.begin().await?;
+
+    // Bind card_id to board_id (WR-08): wrapper only checks membership of the passed
+    // board_id; verify the card is actually on that board before creating checklists.
+    let card_on_board: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM cards WHERE id = ? AND board_id = ?",
+    )
+    .bind(card_id)
+    .bind(board_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if card_on_board.is_none() {
+        return Err(sqlx::Error::Decode("card not on board".into()));
+    }
 
     // Find or create the single checklist for this card
     let checklist_id: String = {
@@ -489,7 +517,7 @@ pub async fn toggle_checklist_item(
     let state = expect_context::<AppState>();
     require_board_member(&board_id, &state.read_pool.0).await?;
 
-    toggle_checklist_item_inner(&state.write_pool.0, &card_id, &item_id, done)
+    toggle_checklist_item_inner(&state.write_pool.0, &board_id, &card_id, &item_id, done)
         .await
         .map_err(|e| {
             tracing::error!("toggle_checklist_item error: {e}");
@@ -512,7 +540,7 @@ pub async fn add_checklist_item(
     let state = expect_context::<AppState>();
     require_board_member(&board_id, &state.read_pool.0).await?;
 
-    add_checklist_item_inner(&state.write_pool.0, &card_id, text)
+    add_checklist_item_inner(&state.write_pool.0, &board_id, &card_id, text)
         .await
         .map_err(|e| {
             tracing::error!("add_checklist_item error: {e}");
@@ -537,6 +565,20 @@ pub async fn assign_label_inner(
     label_id: &str,
     assigned: bool,
 ) -> Result<(), sqlx::Error> {
+    // Bind card_id to board_id (WR-08): the wrapper only checks the caller is a
+    // member of the passed board_id, not that the card is actually on that board.
+    // Without this, a member of board B could mutate a card on board A.
+    let card_on_board: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM cards WHERE id = ? AND board_id = ?",
+    )
+    .bind(card_id)
+    .bind(board_id)
+    .fetch_optional(pool)
+    .await?;
+    if card_on_board.is_none() {
+        return Err(sqlx::Error::Decode("card not on board".into()));
+    }
+
     if assigned {
         // Verify label belongs to this board (T-05-08)
         let on_board: Option<i64> = sqlx::query_scalar(
@@ -683,10 +725,24 @@ pub async fn assign_member_inner(
 #[cfg(feature = "ssr")]
 pub async fn remove_member_inner(
     pool: &sqlx::SqlitePool,
-    _board_id: &str,
+    board_id: &str,
     card_id: &str,
     user_id: &str,
 ) -> Result<(), sqlx::Error> {
+    // Bind card_id to board_id (WR-08): the wrapper only checks board membership of
+    // the passed board_id, so a member of board B could otherwise strip members from
+    // a card on board A. DELETE scoped to cards confirmed on this board.
+    let card_on_board: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM cards WHERE id = ? AND board_id = ?",
+    )
+    .bind(card_id)
+    .bind(board_id)
+    .fetch_optional(pool)
+    .await?;
+    if card_on_board.is_none() {
+        return Err(sqlx::Error::Decode("card not on board".into()));
+    }
+
     sqlx::query("DELETE FROM card_members WHERE card_id = ? AND user_id = ?")
         .bind(card_id)
         .bind(user_id)

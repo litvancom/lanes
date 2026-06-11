@@ -316,7 +316,7 @@ mod card_detail_api_tests {
             .execute(&write_pool).await.expect("seed counts");
 
         // Toggle item1 from false → true
-        let result = toggle_checklist_item_inner(&write_pool, &card_id, &item1, true).await;
+        let result = toggle_checklist_item_inner(&write_pool, &board_id, &card_id, &item1, true).await;
         assert!(result.is_ok(), "toggle should succeed: {:?}", result.err());
         let (done_flag, done_c, total_c) = result.unwrap();
         assert!(done_flag, "returned done flag must be true");
@@ -357,7 +357,7 @@ mod card_detail_api_tests {
         let card_id = insert_card_direct(&write_pool, &board_id, &list_id, "Add Card", 2).await;
 
         // No checklist exists yet — add_checklist_item_inner must create one
-        let result = add_checklist_item_inner(&write_pool, &card_id, "First item".to_string()).await;
+        let result = add_checklist_item_inner(&write_pool, &board_id, &card_id, "First item".to_string()).await;
         assert!(result.is_ok(), "add_checklist_item should succeed: {:?}", result.err());
         let (item, done_c, total_c) = result.unwrap();
         assert_eq!(item.text, "First item", "returned item text must match");
@@ -384,7 +384,7 @@ mod card_detail_api_tests {
         assert_eq!(checklist_count, 1, "one checklist must have been auto-created");
 
         // Adding a second item does NOT create another checklist
-        let result2 = add_checklist_item_inner(&write_pool, &card_id, "Second item".to_string()).await;
+        let result2 = add_checklist_item_inner(&write_pool, &board_id, &card_id, "Second item".to_string()).await;
         assert!(result2.is_ok(), "second add should succeed");
         let (_, _, total2) = result2.unwrap();
         assert_eq!(total2, 2, "total must be 2 after adding second item");
@@ -398,7 +398,7 @@ mod card_detail_api_tests {
         assert_eq!(checklist_count2, 1, "still only one checklist after second add");
 
         // Reject empty text
-        let result_empty = add_checklist_item_inner(&write_pool, &card_id, "  ".to_string()).await;
+        let result_empty = add_checklist_item_inner(&write_pool, &board_id, &card_id, "  ".to_string()).await;
         assert!(result_empty.is_err(), "empty item text must be rejected");
     }
 
