@@ -168,12 +168,12 @@ async fn start_server() {
         // Must be registered BEFORE .layer(auth_layer) so the session/auth layer wraps them.
         // Route-specific body limit: 10 MB for uploads (T-05-19).
         .route(
-            "/api/attachments/:board_id/:card_id",
+            "/api/attachments/{board_id}/{card_id}",
             axum::routing::post(upload_attachment_handler)
                 .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)),
         )
         .route(
-            "/api/attachments/:board_id/:card_id/:key",
+            "/api/attachments/{board_id}/{card_id}/{key}",
             axum::routing::get(download_attachment_handler),
         )
         .leptos_routes(&app_state, routes, {

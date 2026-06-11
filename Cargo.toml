@@ -46,6 +46,8 @@ console_error_panic_hook = { version = "0.1", optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 # js-sys gives the WASM client a real clock (Date.now); std::time panics on wasm32.
 js-sys = { version = "0.3", optional = true }
+# wasm-bindgen-futures: await JS promises (attachment upload fetch) on wasm32.
+wasm-bindgen-futures = { version = "0.4", optional = true }
 
 [features]
 default = []
@@ -54,6 +56,7 @@ hydrate = [
     "dep:console_error_panic_hook",
     "dep:wasm-bindgen",
     "dep:js-sys",
+    "dep:wasm-bindgen-futures",
     "dep:fractional_index",
     "dep:serde_json",
 ]
