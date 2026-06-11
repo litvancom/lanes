@@ -358,21 +358,13 @@ fn humanize_event(kind: &str, payload: Option<&str>) -> String {
     }
 }
 
-/// Minimal JSON string field extractor (no external crate needed for this use case).
-/// Extracts the value of a quoted string key from a flat JSON object.
-/// Returns None if key not found or value is not a quoted string.
-fn extract_json_str<'a>(json: &'a str, key: &str) -> Option<&'a str> {
-    // Look for `"key":"value"` or `"key": "value"`
-    let key_pat = format!("\"{}\"", key);
-    let key_pos = json.find(key_pat.as_str())?;
-    let after_key = &json[key_pos + key_pat.len()..];
-    // Skip `:` and optional whitespace
-    let after_colon = after_key.trim_start_matches(|c: char| c == ':' || c.is_whitespace());
-    if after_colon.starts_with('"') {
-        let inner = &after_colon[1..];
-        let end = inner.find('"')?;
-        Some(&inner[..end])
-    } else {
-        None
-    }
+/// Extract the value of a top-level string field from a flat JSON object payload.
+///
+/// Uses `serde_json` (WR-03) so escaped quotes, backslashes, and unicode escapes in
+/// user-controlled display names are parsed correctly rather than truncated by a
+/// naive substring scan. Returns None if the payload is not valid JSON, the key is
+/// absent, or the value is not a string.
+fn extract_json_str(json: &str, key: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(json).ok()?;
+    value.get(key)?.as_str().map(|s| s.to_string())
 }
