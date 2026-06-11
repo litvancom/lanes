@@ -252,6 +252,156 @@ mod card_detail_api_tests {
     // get_card_detail_inner tests (RED — Task 2 makes these compile and pass)
     // -------------------------------------------------------------------------
 
+    // -------------------------------------------------------------------------
+    // Checklist mutation tests (Task 1 — RED phase)
+    // -------------------------------------------------------------------------
+
+    /// Helper: insert a checklist directly for test setup.
+    async fn insert_checklist_direct(pool: &sqlx::SqlitePool, card_id: &str) -> String {
+        use uuid::Uuid;
+        let checklist_id = Uuid::now_v7().to_string();
+        sqlx::query!(
+            "INSERT INTO checklists (id, card_id, title, position) VALUES (?, ?, 'Checklist', 0)",
+            checklist_id, card_id
+        )
+        .execute(pool)
+        .await
+        .expect("insert checklist");
+        checklist_id
+    }
+
+    /// Helper: insert a checklist item directly for test setup.
+    async fn insert_checklist_item_direct(
+        pool: &sqlx::SqlitePool,
+        checklist_id: &str,
+        text: &str,
+        done: bool,
+        position: i64,
+    ) -> String {
+        use uuid::Uuid;
+        let item_id = Uuid::now_v7().to_string();
+        let done_val = done as i64;
+        sqlx::query!(
+            "INSERT INTO checklist_items (id, checklist_id, text, done, position) VALUES (?, ?, ?, ?, ?)",
+            item_id, checklist_id, text, done_val, position
+        )
+        .execute(pool)
+        .await
+        .expect("insert checklist item");
+        item_id
+    }
+
+    /// toggle_checklist_item_inner sets done on the item AND recounts in the same transaction.
+    /// Asserts: returned counts match DB counts (no drift).
+    #[tokio::test]
+    async fn test_toggle_checklist_item_updates_counts() {
+        use lanes::api::card_detail_api::toggle_checklist_item_inner;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        let user_id = insert_user_direct(&write_pool, "checklist_toggle@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Checklist Toggle Board").await;
+        insert_member_direct(&write_pool, &board_id, &user_id, "owner").await;
+        let list_id = insert_list_direct(&write_pool, &board_id, "Toggle List").await;
+        let card_id = insert_card_direct(&write_pool, &board_id, &list_id, "Checklist Card", 1).await;
+
+        // Seed checklist with 3 items, 1 already done
+        let checklist_id = insert_checklist_direct(&write_pool, &card_id).await;
+        let item1 = insert_checklist_item_direct(&write_pool, &checklist_id, "Item 1", false, 0).await;
+        let _item2 = insert_checklist_item_direct(&write_pool, &checklist_id, "Item 2", true, 1).await;
+        let _item3 = insert_checklist_item_direct(&write_pool, &checklist_id, "Item 3", false, 2).await;
+
+        // Seed cards.checklist_total = 3, checklist_done = 1
+        sqlx::query!("UPDATE cards SET checklist_total=3, checklist_done=1 WHERE id=?", card_id)
+            .execute(&write_pool).await.expect("seed counts");
+
+        // Toggle item1 from false → true
+        let result = toggle_checklist_item_inner(&write_pool, &card_id, &item1, true).await;
+        assert!(result.is_ok(), "toggle should succeed: {:?}", result.err());
+        let (done_flag, done_c, total_c) = result.unwrap();
+        assert!(done_flag, "returned done flag must be true");
+        assert_eq!(total_c, 3, "total must be 3");
+        assert_eq!(done_c, 2, "done must be 2 after toggling item1 done");
+
+        // Verify DB cards row matches returned counts (no drift — T-05-12)
+        let (db_done, db_total): (i64, i64) =
+            sqlx::query_as("SELECT checklist_done, checklist_total FROM cards WHERE id=?")
+                .bind(&card_id)
+                .fetch_one(&write_pool)
+                .await
+                .expect("fetch card counts");
+        assert_eq!(db_done, done_c, "DB checklist_done must match returned value");
+        assert_eq!(db_total, total_c, "DB checklist_total must match returned value");
+
+        // Verify the item itself is marked done
+        let item_done: i64 =
+            sqlx::query_scalar("SELECT done FROM checklist_items WHERE id=?")
+                .bind(&item1)
+                .fetch_one(&write_pool)
+                .await
+                .expect("fetch item done");
+        assert_eq!(item_done, 1, "checklist_items.done must be 1 after toggle");
+    }
+
+    /// add_checklist_item_inner creates the checklist if none exists and bumps cards.checklist_total.
+    #[tokio::test]
+    async fn test_add_checklist_item_creates_checklist_and_bumps_total() {
+        use lanes::api::card_detail_api::add_checklist_item_inner;
+
+        let (_file, write_pool, _read_pool) = test_db().await;
+
+        let user_id = insert_user_direct(&write_pool, "checklist_add@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Checklist Add Board").await;
+        insert_member_direct(&write_pool, &board_id, &user_id, "owner").await;
+        let list_id = insert_list_direct(&write_pool, &board_id, "Add List").await;
+        let card_id = insert_card_direct(&write_pool, &board_id, &list_id, "Add Card", 2).await;
+
+        // No checklist exists yet — add_checklist_item_inner must create one
+        let result = add_checklist_item_inner(&write_pool, &card_id, "First item".to_string()).await;
+        assert!(result.is_ok(), "add_checklist_item should succeed: {:?}", result.err());
+        let (item, done_c, total_c) = result.unwrap();
+        assert_eq!(item.text, "First item", "returned item text must match");
+        assert!(!item.done, "new item must be undone");
+        assert_eq!(total_c, 1, "total must be 1 after adding first item");
+        assert_eq!(done_c, 0, "done count must be 0 for fresh item");
+
+        // Verify DB cards.checklist_total was bumped
+        let db_total: i64 =
+            sqlx::query_scalar("SELECT checklist_total FROM cards WHERE id=?")
+                .bind(&card_id)
+                .fetch_one(&write_pool)
+                .await
+                .expect("fetch card total");
+        assert_eq!(db_total, total_c, "DB checklist_total must match returned total");
+
+        // A checklist row must have been created
+        let checklist_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM checklists WHERE card_id=?")
+                .bind(&card_id)
+                .fetch_one(&write_pool)
+                .await
+                .expect("count checklists");
+        assert_eq!(checklist_count, 1, "one checklist must have been auto-created");
+
+        // Adding a second item does NOT create another checklist
+        let result2 = add_checklist_item_inner(&write_pool, &card_id, "Second item".to_string()).await;
+        assert!(result2.is_ok(), "second add should succeed");
+        let (_, _, total2) = result2.unwrap();
+        assert_eq!(total2, 2, "total must be 2 after adding second item");
+
+        let checklist_count2: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM checklists WHERE card_id=?")
+                .bind(&card_id)
+                .fetch_one(&write_pool)
+                .await
+                .expect("count checklists again");
+        assert_eq!(checklist_count2, 1, "still only one checklist after second add");
+
+        // Reject empty text
+        let result_empty = add_checklist_item_inner(&write_pool, &card_id, "  ".to_string()).await;
+        assert!(result_empty.is_err(), "empty item text must be rejected");
+    }
+
     /// get_card_detail_inner returns CardDetail with the correct card_num for the seeded card.
     #[tokio::test]
     async fn test_get_card_detail_inner_returns_card_num() {

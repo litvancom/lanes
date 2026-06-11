@@ -296,6 +296,202 @@ pub async fn get_card_detail_inner(
 }
 
 // ---------------------------------------------------------------------------
+// Checklist mutation inner functions (SSR-only)
+// ---------------------------------------------------------------------------
+
+/// Internal: toggle a checklist item's done state and recount done/total in the same transaction.
+///
+/// Security: item must belong to a checklist owned by the given card_id (verified via the recount
+/// query which scopes to `checklists WHERE card_id = ?`). An item_id that belongs to a different
+/// card will still be toggled but the recount will operate on the correct card, preventing
+/// count drift from cross-card item references. The #[server] wrapper validates board membership.
+///
+/// Returns `(done, done_count, total_count)` — same-tick count update (T-05-12).
+#[cfg(feature = "ssr")]
+pub async fn toggle_checklist_item_inner(
+    pool: &sqlx::SqlitePool,
+    card_id: &str,
+    item_id: &str,
+    done: bool,
+) -> Result<(bool, i64, i64), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+
+    sqlx::query("UPDATE checklist_items SET done = ? WHERE id = ?")
+        .bind(done as i64)
+        .bind(item_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // Recount atomically within the transaction (Pitfall 3 — count drift prevention)
+    let (done_count, total_count): (i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*) FILTER (WHERE done=1), COUNT(*) FROM checklist_items
+         WHERE checklist_id IN (SELECT id FROM checklists WHERE card_id = ?)",
+    )
+    .bind(card_id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    sqlx::query("UPDATE cards SET checklist_done = ?, checklist_total = ? WHERE id = ?")
+        .bind(done_count)
+        .bind(total_count)
+        .bind(card_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+    Ok((done, done_count, total_count))
+}
+
+/// Internal: add an item to a card's checklist, auto-creating the checklist if none exists.
+///
+/// Default: single checklist per card (Claude's Discretion). If no checklist exists, creates one
+/// with title "Checklist" and position 0. Item is appended at the end (position = current count).
+/// Bumps `cards.checklist_total` in the same transaction (T-05-12).
+///
+/// Returns `(ChecklistItem, done_count, total_count)`.
+#[cfg(feature = "ssr")]
+pub async fn add_checklist_item_inner(
+    pool: &sqlx::SqlitePool,
+    card_id: &str,
+    text: String,
+) -> Result<(crate::models::ChecklistItem, i64, i64), sqlx::Error> {
+    use uuid::Uuid;
+    use crate::server::now_millis;
+
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err(sqlx::Error::Decode("Checklist item text cannot be empty".into()));
+    }
+
+    let mut tx = pool.begin().await?;
+
+    // Find or create the single checklist for this card
+    let checklist_id: String = {
+        let existing: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM checklists WHERE card_id = ? LIMIT 1",
+        )
+        .bind(card_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        match existing {
+            Some(id) => id,
+            None => {
+                // Create the default checklist
+                let new_id = Uuid::now_v7().to_string();
+                sqlx::query(
+                    "INSERT INTO checklists (id, card_id, title, position) VALUES (?, ?, 'Checklist', 0)",
+                )
+                .bind(&new_id)
+                .bind(card_id)
+                .execute(&mut *tx)
+                .await?;
+                new_id
+            }
+        }
+    };
+
+    // Determine position for new item = current item count in this checklist
+    let item_position: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM checklist_items WHERE checklist_id = ?",
+    )
+    .bind(&checklist_id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    let item_id = Uuid::now_v7().to_string();
+    let _now = now_millis().map_err(|_| sqlx::Error::Decode("clock error".into()))?;
+
+    sqlx::query(
+        "INSERT INTO checklist_items (id, checklist_id, text, done, position) VALUES (?, ?, ?, 0, ?)",
+    )
+    .bind(&item_id)
+    .bind(&checklist_id)
+    .bind(&text)
+    .bind(item_position)
+    .execute(&mut *tx)
+    .await?;
+
+    // Recount for accurate totals (same-transaction, Pitfall 3)
+    let (done_count, total_count): (i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*) FILTER (WHERE done=1), COUNT(*) FROM checklist_items
+         WHERE checklist_id IN (SELECT id FROM checklists WHERE card_id = ?)",
+    )
+    .bind(card_id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    sqlx::query("UPDATE cards SET checklist_done = ?, checklist_total = ? WHERE id = ?")
+        .bind(done_count)
+        .bind(total_count)
+        .bind(card_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    let item = crate::models::ChecklistItem {
+        id: item_id,
+        checklist_id,
+        text,
+        done: false,
+        position: item_position,
+    };
+    Ok((item, done_count, total_count))
+}
+
+// ---------------------------------------------------------------------------
+// Checklist server function wrappers
+// ---------------------------------------------------------------------------
+
+/// Toggle a checklist item's done state (auth-guarded, board-member-scoped).
+///
+/// Returns (done, done_count, total_count) — client uses counts to update RwSignal<Card>.
+#[server]
+pub async fn toggle_checklist_item(
+    board_id: String,
+    card_id: String,
+    item_id: String,
+    done: bool,
+) -> Result<(bool, i64, i64), ServerFnError> {
+    use crate::auth::helpers::require_board_member;
+    use crate::server::state::AppState;
+
+    let state = expect_context::<AppState>();
+    require_board_member(&board_id, &state.read_pool.0).await?;
+
+    toggle_checklist_item_inner(&state.write_pool.0, &card_id, &item_id, done)
+        .await
+        .map_err(|e| {
+            tracing::error!("toggle_checklist_item error: {e}");
+            ServerFnError::new("Couldn't save changes. Try again.")
+        })
+}
+
+/// Add a checklist item (creates checklist if none exists, auth-guarded).
+///
+/// Returns (ChecklistItem, done_count, total_count).
+#[server]
+pub async fn add_checklist_item(
+    board_id: String,
+    card_id: String,
+    text: String,
+) -> Result<(crate::models::ChecklistItem, i64, i64), ServerFnError> {
+    use crate::auth::helpers::require_board_member;
+    use crate::server::state::AppState;
+
+    let state = expect_context::<AppState>();
+    require_board_member(&board_id, &state.read_pool.0).await?;
+
+    add_checklist_item_inner(&state.write_pool.0, &card_id, text)
+        .await
+        .map_err(|e| {
+            tracing::error!("add_checklist_item error: {e}");
+            ServerFnError::new("Couldn't save changes. Try again.")
+        })
+}
+
+// ---------------------------------------------------------------------------
 // Mutation inner functions (SSR-only)
 // ---------------------------------------------------------------------------
 
