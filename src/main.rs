@@ -89,6 +89,10 @@ async fn start_server() {
     use lanes::mailer::console::ConsoleMailer;
     use lanes::mailer::Mailer;
     use lanes::server::attachments::{upload_attachment_handler, download_attachment_handler};
+    use lanes::server::board_rooms::BoardRoomRegistry;
+    use lanes::server::user_notif_registry::UserNotifRegistry;
+    use lanes::server::presence_registry::PresenceRegistry;
+    use lanes::server::ws_handler::ws_board_handler;
     use axum::Router;
     use leptos::config::get_configuration;
     use leptos_axum::{generate_route_list, LeptosRoutes};
@@ -155,12 +159,20 @@ async fn start_server() {
     let addr = leptos_options.site_addr;
     let routes = generate_route_list(App);
 
+    // Construct realtime registries (RT-01/RT-03/RT-04)
+    let board_rooms = BoardRoomRegistry::new();
+    let user_notifs = UserNotifRegistry::new();
+    let presence = PresenceRegistry::new();
+
     let app_state = AppState {
         leptos_options: leptos_options.clone(),
         write_pool: WritePool(write_pool),
         read_pool: ReadPool(read_pool),
         mailer,
         storage,
+        board_rooms,
+        user_notifs,
+        presence,
     };
 
     let app = Router::new()
@@ -180,6 +192,9 @@ async fn start_server() {
             "/api/attachments/{board_id}/{card_id}/{key}",
             axum::routing::get(download_attachment_handler),
         )
+        // WebSocket route for realtime board sync (RT-01, T-6-01).
+        // Axum 0.8 path syntax uses {param} (not :param).
+        .route("/ws/board/{id}", axum::routing::get(ws_board_handler))
         .leptos_routes(&app_state, routes, {
             let leptos_options = leptos_options.clone();
             move || {
