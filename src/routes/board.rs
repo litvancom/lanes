@@ -307,6 +307,36 @@ pub fn BoardPage() -> impl IntoView {
 
                                     // CreateBoardModal — mounted once for browse-templates path
                                     <CreateBoardModal show=show_create_modal/>
+
+                                    // Cursor-following drag image (Trello-style). While a drag is in
+                                    // progress, render a floating clone of the dragged card at the live
+                                    // pointer position. current_x/current_y are updated on every
+                                    // pointermove (kanban_list.rs); pointer-events:none keeps the clone
+                                    // out of the drop hit-test. The source card stays dimmed in place.
+                                    {
+                                        let drag_info = board_signals.drag_info;
+                                        let card_signals = board_signals.card_signals;
+                                        move || {
+                                            drag_info.get()
+                                                .filter(|d| d.is_dragging)
+                                                .and_then(|d| {
+                                                    let title = card_signals.with(|cs| {
+                                                        cs.get(&d.card_id).map(|sig| sig.get().title)
+                                                    })?;
+                                                    Some((d.current_x, d.current_y, title))
+                                                })
+                                                .map(|(x, y, title)| view! {
+                                                    <div
+                                                        class="lns-card lns-card-drag-image"
+                                                        style=format!("left:{}px;top:{}px;", x, y)
+                                                    >
+                                                        <div class="lns-card-body">
+                                                            <span class="lns-card-title">{title}</span>
+                                                        </div>
+                                                    </div>
+                                                })
+                                        }
+                                    }
                                 }.into_any()
                             }
                         }

@@ -1276,6 +1276,20 @@ input, textarea {
   background: #e3e1dc;
   border-color: var(--accent);
 }
+/* Cursor-following drag image — a floating clone of the dragged card that tracks
+   the pointer (Trello-style). The source card stays dimmed in place (above).
+   pointer-events:none keeps it out of the elementsFromPoint drop hit-test;
+   transition:none so left/top follow the cursor without lag. */
+.lns-card-drag-image {
+  position: fixed;
+  z-index: 1000;
+  width: 264px;
+  pointer-events: none;
+  transition: none;
+  transform: translate(-50%, -45%) rotate(3deg);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.22);
+  opacity: 0.97;
+}
 
 .lns-card-stub-title {
   font-size: 13px;
