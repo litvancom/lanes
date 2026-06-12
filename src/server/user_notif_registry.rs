@@ -1,15 +1,18 @@
 //! Per-user notification delivery registry (RT-04).
 //!
-//! `UserNotifRegistry` holds one `mpsc::UnboundedSender<NotifEvent>` per connected user.
-//! The Sender is inserted when the user's WS handler calls `subscribe`, and removed when
-//! the handler exits (Pitfall 1 explicit cleanup).
+//! `UserNotifRegistry` holds one or more `mpsc::UnboundedSender<NotifEvent>` per connected
+//! user, keyed by a per-connection `channel_id` (UUID string).  A user with multiple
+//! concurrent connections (e.g. a dashboard tab and a board tab) gets independent entries
+//! — publish fans out to ALL of them.
 //!
-//! Using `mpsc::unbounded` rather than broadcast: a user has at most one WS connection in v1.
-//! The Sender lives in the registry; the Receiver lives in the WS handler task.
-//! When two tabs open: the second subscribe() overwrites the first Sender (the latest tab
-//! receives notifications). Teardown must only remove the entry belonging to this connection
-//! — use `remove_if_current` rather than `remove` to avoid the first-tab-to-close wiping the
-//! surviving second-tab's sender (CR-01).
+//! When a connection opens, `subscribe` appends a new `(channel_id, Sender)` pair to the
+//! user's Vec and returns the `channel_id` alongside the Sender/Receiver pair.
+//! When the connection closes, `remove_if_current(user_id, channel_id)` removes only that
+//! connection's entry, preserving any sibling connections (CR-01 under fan-out).
+//!
+//! `publish` fans out to every live Sender for the user, pruning dead Senders (dropped
+//! Receivers) on send failure.  If the Vec becomes empty after pruning, the user key is
+//! removed to avoid unbounded map growth (T-06-SC-03 DoS mitigation).
 
 #[cfg(feature = "ssr")]
 use dashmap::DashMap;
@@ -20,12 +23,16 @@ use tokio::sync::mpsc;
 #[cfg(feature = "ssr")]
 use crate::models::events::NotifEvent;
 
-/// Concurrent registry mapping user IDs to their notification channel Senders.
+/// Concurrent registry mapping user IDs to their per-connection notification channel Senders.
 ///
-/// Cloning is cheap — the inner `Arc<DashMap>` is reference-counted.
+/// Each entry is a `Vec<(channel_id, Sender)>` so that multiple concurrent connections for
+/// the same user all receive published events (fan-out).  Cloning is cheap — the inner
+/// `Arc<DashMap>` is reference-counted.
 #[cfg(feature = "ssr")]
 #[derive(Clone)]
-pub struct UserNotifRegistry(pub Arc<DashMap<String, mpsc::UnboundedSender<NotifEvent>>>);
+pub struct UserNotifRegistry(
+    pub Arc<DashMap<String, Vec<(String, mpsc::UnboundedSender<NotifEvent>)>>>,
+);
 
 #[cfg(feature = "ssr")]
 impl UserNotifRegistry {
@@ -36,30 +43,51 @@ impl UserNotifRegistry {
 
     /// Register a notification channel for the given user.
     ///
-    /// Overwrites any existing entry (multi-tab: only the latest tab receives notifications).
-    /// Returns both the Sender (for connection-scoped teardown via `remove_if_current`) and
-    /// the Receiver end (owned by the WS handler task for the lifetime of the connection).
-    pub fn subscribe(&self, user_id: &str) -> (mpsc::UnboundedSender<NotifEvent>, mpsc::UnboundedReceiver<NotifEvent>) {
+    /// Creates a new unbounded channel, generates a unique `channel_id`, appends the Sender
+    /// to the user's Vec (APPEND — never overwrites siblings), and returns
+    /// `(channel_id, Sender, Receiver)`.
+    ///
+    /// The `channel_id` must be passed to `remove_if_current` when the connection closes so
+    /// only this connection's Sender is removed (CR-01 under fan-out).
+    pub fn subscribe(
+        &self,
+        user_id: &str,
+    ) -> (String, mpsc::UnboundedSender<NotifEvent>, mpsc::UnboundedReceiver<NotifEvent>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        self.0.insert(user_id.to_string(), tx.clone());
-        (tx, rx)
+        let channel_id = uuid::Uuid::new_v4().to_string();
+        self.0
+            .entry(user_id.to_string())
+            .or_default()
+            .push((channel_id.clone(), tx.clone()));
+        (channel_id, tx, rx)
     }
 
-    /// Deliver a notification to a connected user.
+    /// Deliver a notification to all connections for the given user (fan-out).
     ///
-    /// Silently ignores delivery failures (user disconnected between lookup and send).
+    /// Iterates the user's Sender Vec, cloning the event for each Sender.
+    /// Prunes any Sender whose `send` returns `Err` (receiver dropped — stale connection).
+    /// If the Vec becomes empty after pruning, the user key is removed (T-06-SC-03).
     pub fn publish(&self, user_id: &str, event: NotifEvent) {
-        if let Some(tx) = self.0.get(user_id) {
-            let _ = tx.send(event);
+        if let Some(mut entry) = self.0.get_mut(user_id) {
+            entry.retain(|(_, tx)| tx.send(event.clone()).is_ok());
+            if entry.is_empty() {
+                drop(entry); // release the DashMap shard lock before remove
+                self.0.remove(user_id);
+            }
         }
     }
 
-    /// Remove the channel for a user only if the currently-stored sender is the one this
-    /// connection installed (connection-scoped teardown — CR-01).
+    /// Remove the channel for this specific connection only (channel-scoped teardown).
     ///
-    /// If a second tab has already overwritten the entry with its own sender, this is a no-op
-    /// so the second tab's notifications are preserved.
-    pub fn remove_if_current(&self, user_id: &str, my_tx: &mpsc::UnboundedSender<NotifEvent>) {
-        self.0.remove_if(user_id, |_, cur| cur.same_channel(my_tx));
+    /// Retains all other connections for the same user (CR-01 under fan-out).
+    /// If the Vec becomes empty after removal, the user key is removed.
+    pub fn remove_if_current(&self, user_id: &str, channel_id: &str) {
+        if let Some(mut entry) = self.0.get_mut(user_id) {
+            entry.retain(|(cid, _)| cid != channel_id);
+            if entry.is_empty() {
+                drop(entry);
+                self.0.remove(user_id);
+            }
+        }
     }
 }
