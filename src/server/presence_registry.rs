@@ -5,8 +5,10 @@
 //! high-churn and must not cause `RecvError::Lagged` in DB-mutation receivers.
 //!
 //! Keys in `viewers` are `"{board_id}:{user_id}"` — allows the same user to view
-//! multiple boards (not multi-tab: a second WS for the same user on the same board
-//! overwrites the presence entry and the viewer appears once in the list).
+//! multiple boards simultaneously. For multi-tab on the *same* board, `conn_count`
+//! reference-counts connections per `(board_id, user_id)` so `leave` only removes
+//! the entry and broadcasts `ViewerLeft` when the last connection for that user on
+//! that board closes (CR-02).
 //!
 //! Full implementation for 06-04: join/leave/heartbeat/set_editing/set_typing/
 //! snapshot/sweep_once. The background sweep task is spawned once in start_server.
@@ -40,6 +42,7 @@ pub struct PresenceState {
 /// Ephemeral presence registry.
 ///
 /// `viewers` maps `"{board_id}:{user_id}"` → `PresenceState`.
+/// `conn_count` maps the same key → active connection count for ref-counted teardown (CR-02).
 /// `presence_tx` maps `board_id` → `broadcast::Sender<PresenceEvent>` for per-board fan-out.
 ///
 /// Cloning is cheap — all fields are `Arc`-backed.
@@ -47,6 +50,7 @@ pub struct PresenceState {
 #[derive(Clone)]
 pub struct PresenceRegistry {
     pub viewers: Arc<DashMap<String, PresenceState>>,
+    pub conn_count: Arc<DashMap<String, usize>>,
     pub presence_tx: Arc<DashMap<String, broadcast::Sender<PresenceEvent>>>,
 }
 
@@ -56,6 +60,7 @@ impl PresenceRegistry {
     pub fn new() -> Self {
         Self {
             viewers: Arc::new(DashMap::new()),
+            conn_count: Arc::new(DashMap::new()),
             presence_tx: Arc::new(DashMap::new()),
         }
     }
@@ -97,42 +102,73 @@ impl PresenceRegistry {
 
     /// Record a viewer joining a board and broadcast ViewerJoined to others.
     ///
-    /// Inserts/replaces the viewer entry. Broadcasting uses the sender directly,
-    /// so any existing subscriber will receive the ViewerJoined event.
+    /// Increments the connection ref-count for this (board_id, user_id) pair (CR-02).
+    /// On first join (count was 0), inserts the viewer entry and broadcasts ViewerJoined.
+    /// On subsequent joins (multi-tab), only updates the heartbeat — no duplicate event.
     pub fn join(&self, board_id: &str, user: &AuthUser, _client_id: &str) {
         let key = format!("{}:{}", board_id, user.id);
-        self.viewers.insert(
-            key,
-            PresenceState {
+
+        // Increment connection ref-count.
+        let mut count_entry = self.conn_count.entry(key.clone()).or_insert(0);
+        *count_entry += 1;
+        let is_first = *count_entry == 1;
+        drop(count_entry);
+
+        if is_first {
+            // First connection for this user on this board — insert viewer entry.
+            self.viewers.insert(
+                key,
+                PresenceState {
+                    user_id: user.id.clone(),
+                    display_name: user.display_name.clone(),
+                    avatar_color: user.avatar_color.clone(),
+                    last_heartbeat: Instant::now(),
+                    board_id: board_id.to_string(),
+                    editing_card_id: None,
+                    typing_in_card_id: None,
+                },
+            );
+            // Broadcast ViewerJoined to other viewers on this board.
+            let tx = self.presence_tx
+                .entry(board_id.to_string())
+                .or_insert_with(|| broadcast::channel(1024).0);
+            let _ = tx.send(PresenceEvent::ViewerJoined {
                 user_id: user.id.clone(),
                 display_name: user.display_name.clone(),
                 avatar_color: user.avatar_color.clone(),
-                last_heartbeat: Instant::now(),
-                board_id: board_id.to_string(),
-                editing_card_id: None,
-                typing_in_card_id: None,
-            },
-        );
-        // Broadcast ViewerJoined to other viewers on this board.
-        // Use entry-or-insert so the channel is created if this is the first viewer.
-        let tx = self.presence_tx
-            .entry(board_id.to_string())
-            .or_insert_with(|| broadcast::channel(1024).0);
-        let _ = tx.send(PresenceEvent::ViewerJoined {
-            user_id: user.id.clone(),
-            display_name: user.display_name.clone(),
-            avatar_color: user.avatar_color.clone(),
-        });
+            });
+        } else {
+            // Subsequent connection (multi-tab) — refresh heartbeat only.
+            if let Some(mut entry) = self.viewers.get_mut(&key) {
+                entry.last_heartbeat = Instant::now();
+            }
+        }
     }
 
-    /// Record a viewer leaving a board and broadcast ViewerLeft to others.
+    /// Record a viewer leaving a board.
+    ///
+    /// Decrements the connection ref-count (CR-02). Only removes the viewer entry and
+    /// broadcasts `ViewerLeft` when the count reaches 0 (last connection for this user
+    /// on this board closed).
     pub fn leave(&self, board_id: &str, user_id: &str) {
         let key = format!("{}:{}", board_id, user_id);
-        self.viewers.remove(&key);
-        if let Some(tx) = self.presence_tx.get(board_id) {
-            let _ = tx.send(PresenceEvent::ViewerLeft {
-                user_id: user_id.to_string(),
-            });
+
+        let remaining = {
+            let mut count_entry = self.conn_count.entry(key.clone()).or_insert(0);
+            if *count_entry > 0 {
+                *count_entry -= 1;
+            }
+            *count_entry
+        };
+
+        if remaining == 0 {
+            self.conn_count.remove(&key);
+            self.viewers.remove(&key);
+            if let Some(tx) = self.presence_tx.get(board_id) {
+                let _ = tx.send(PresenceEvent::ViewerLeft {
+                    user_id: user_id.to_string(),
+                });
+            }
         }
     }
 
@@ -190,6 +226,8 @@ impl PresenceRegistry {
     /// without requiring tokio::time::pause to affect std::time::Instant.
     ///
     /// Called by the background sweep loop in start_server every 10 seconds (Anti-Pattern §717).
+    /// The sweep removes the viewer entry AND resets the conn_count to 0, treating a stale
+    /// heartbeat as equivalent to all connections having gone away.
     pub fn sweep_once(&self, now: Instant) {
         let threshold = Duration::from_secs(15);
 
@@ -214,8 +252,9 @@ impl PresenceRegistry {
                 continue;
             };
 
-            // Remove the viewer
+            // Remove viewer entry and reset ref-count.
             self.viewers.remove(&key);
+            self.conn_count.remove(&key);
 
             // Broadcast ViewerLeft to remaining board viewers (T-6-15 reap)
             if let Some(tx) = self.presence_tx.get(&board_id) {

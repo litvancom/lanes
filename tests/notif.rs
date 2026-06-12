@@ -1,6 +1,7 @@
 //! UserNotifRegistry tests (RT-04 / 06-05).
 //!
-//! Tests for per-user notification channel delivery and isolation.
+//! Tests for per-user notification channel delivery, isolation, and connection-scoped
+//! teardown (CR-01: remove_if_current prevents a second tab's sender from being wiped).
 
 #[cfg(test)]
 mod tests {
@@ -12,7 +13,7 @@ mod tests {
     #[tokio::test]
     async fn test_mention_notif_delivery() {
         let reg = UserNotifRegistry::new();
-        let mut rx = reg.subscribe("userB");
+        let (_tx, mut rx) = reg.subscribe("userB");
 
         let event = NotifEvent::UnreadCountUpdated { count: 1 };
         reg.publish("userB", event.clone());
@@ -30,8 +31,8 @@ mod tests {
     #[tokio::test]
     async fn test_mention_notif_isolation() {
         let reg = UserNotifRegistry::new();
-        let mut rx_a = reg.subscribe("userA");
-        let mut rx_b = reg.subscribe("userB");
+        let (_tx_a, mut rx_a) = reg.subscribe("userA");
+        let (_tx_b, mut rx_b) = reg.subscribe("userB");
 
         // Publish only to userB.
         let event = NotifEvent::UnreadCountUpdated { count: 3 };
@@ -54,17 +55,49 @@ mod tests {
         }
     }
 
-    /// After remove(), publishing no longer panics and the channel is gone.
+    /// After remove_if_current with the current sender, publishing no longer delivers.
     #[tokio::test]
-    async fn test_notif_cleanup_on_remove() {
+    async fn test_notif_cleanup_on_remove_if_current() {
         let reg = UserNotifRegistry::new();
-        let _rx = reg.subscribe("userB");
+        let (tx, _rx) = reg.subscribe("userB");
 
-        // Remove the user's channel (simulates WS disconnect).
-        reg.remove("userB");
+        // Remove using the exact sender we installed — should succeed.
+        reg.remove_if_current("userB", &tx);
 
         // Publishing to a removed user should NOT panic — it silently drops.
         reg.publish("userB", NotifEvent::UnreadCountUpdated { count: 99 });
         // If we got here without panic, the test passes.
+    }
+
+    /// CR-01: remove_if_current with a stale sender does NOT wipe the current entry.
+    ///
+    /// Scenario: tab A subscribes, tab B subscribes (overwrites), tab A disconnects.
+    /// Tab B should still receive events.
+    #[tokio::test]
+    async fn test_remove_if_current_preserves_newer_tab() {
+        let reg = UserNotifRegistry::new();
+
+        // Tab A subscribes first.
+        let (tx_a, _rx_a) = reg.subscribe("userC");
+        // Tab B subscribes second — overwrites the registry entry.
+        let (tx_b, mut rx_b) = reg.subscribe("userC");
+
+        // Tab A closes — remove_if_current should be a no-op because tx_a is no longer current.
+        reg.remove_if_current("userC", &tx_a);
+
+        // Tab B should still receive events.
+        reg.publish("userC", NotifEvent::UnreadCountUpdated { count: 7 });
+        match rx_b.try_recv() {
+            Ok(NotifEvent::UnreadCountUpdated { count }) => {
+                assert_eq!(count, 7, "tab B should still receive after tab A's remove_if_current");
+            }
+            Ok(other) => panic!("expected UnreadCountUpdated, got {other:?}"),
+            Err(e) => panic!("tab B should receive event, got {e:?}"),
+        }
+
+        // Tab B closes — remove_if_current with the current sender removes the entry.
+        reg.remove_if_current("userC", &tx_b);
+        reg.publish("userC", NotifEvent::UnreadCountUpdated { count: 99 });
+        // No panic — silently dropped.
     }
 }
