@@ -1,6 +1,8 @@
 #[cfg(feature = "ssr")]
 pub mod attachments;
 #[cfg(feature = "ssr")]
+pub mod rest_api;
+#[cfg(feature = "ssr")]
 pub mod board_rooms;
 #[cfg(feature = "ssr")]
 pub mod config;

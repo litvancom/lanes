@@ -42,6 +42,9 @@ object_store = { version = "0.13", features = ["fs", "aws"], optional = true }
 serde_json = { version = "1", optional = true }
 dashmap = { version = "6", optional = true }
 chrono = { version = "0.4", features = ["serde"], optional = true }
+utoipa = { version = "5", features = ["axum_extras"], optional = true }
+utoipa-axum = { version = "0.2", optional = true }
+sha2 = { version = "0.11", optional = true }
 
 # --- Hydrate only (WASM) ---
 console_error_panic_hook = { version = "0.1", optional = true }
@@ -116,6 +119,9 @@ ssr = [
     "dep:serde_json",
     "dep:dashmap",
     "dep:chrono",
+    "dep:utoipa",
+    "dep:utoipa-axum",
+    "dep:sha2",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",

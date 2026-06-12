@@ -93,6 +93,8 @@ async fn start_server() {
     use lanes::server::user_notif_registry::UserNotifRegistry;
     use lanes::server::presence_registry::PresenceRegistry;
     use lanes::server::ws_handler::{ws_board_handler, ws_notifications_handler};
+    use lanes::server::rest_api::auth::RateLimiter;
+    use lanes::server::rest_api::api_router;
     use axum::Router;
     use leptos::config::get_configuration;
     use leptos_axum::{generate_route_list, LeptosRoutes};
@@ -163,6 +165,7 @@ async fn start_server() {
     let board_rooms = BoardRoomRegistry::new();
     let user_notifs = UserNotifRegistry::new();
     let presence = PresenceRegistry::new();
+    let rate_limiter = RateLimiter::default();
 
     let app_state = AppState {
         leptos_options: leptos_options.clone(),
@@ -173,6 +176,7 @@ async fn start_server() {
         board_rooms,
         user_notifs,
         presence: presence.clone(),
+        rate_limiter,
     };
 
     // Presence sweep background task (Anti-Pattern §717: spawn once in start_server).
@@ -203,6 +207,10 @@ async fn start_server() {
     }
 
     let app = Router::new()
+        // REST API routes (/api/v1/* + /api/openapi.json) — bearer token auth only (D-15/D-16).
+        // Merged BEFORE .layer(auth_layer) so session middleware does NOT gate these routes
+        // (Pitfall 2: bearer auth must not interfere with session-based Leptos routes).
+        .merge(api_router())
         // Attachment upload/download routes (plain Axum — not Leptos server fns, DETAIL-08).
         // Must be registered BEFORE .layer(auth_layer) so the session/auth layer wraps them.
         // Route-specific body limit for uploads (T-05-19, CR-03).

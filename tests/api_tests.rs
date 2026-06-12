@@ -1,5 +1,145 @@
-//! Integration tests for list_boards and add_board server functions.
-//! Run: DATABASE_URL=sqlite://data/lanes.db cargo test --features ssr api_tests
+//! Integration tests for the REST API: bearer extractor, boards IDOR, token management.
+//! Run: cargo test --features ssr bearer_token
+//!      cargo test --features ssr api_list_boards
+//!      cargo test --features ssr token_
+
+// ---------------------------------------------------------------------------
+// Bearer token extractor tests (Task 1 Wave-0)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "ssr")]
+mod bearer_tests {
+    use lanes::server::db::{init_pools, run_migrations};
+    use lanes::server::rest_api::auth::{resolve_api_user, RateLimiter};
+    use tempfile::NamedTempFile;
+
+    async fn test_db() -> (NamedTempFile, sqlx::SqlitePool) {
+        let file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_str().expect("path").to_string();
+        let url = format!("sqlite://{}", path);
+        let (write_pool, _read_pool) = init_pools(&url).await.expect("init pools");
+        run_migrations(&write_pool).await.expect("migrations");
+        (file, write_pool)
+    }
+
+    async fn insert_user(pool: &sqlx::SqlitePool, email: &str) -> String {
+        use uuid::Uuid;
+        let id = Uuid::now_v7().to_string();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        sqlx::query!(
+            r#"INSERT INTO users (id, email, display_name, avatar_color, auth_provider, created_at)
+               VALUES (?, ?, ?, '#7c5cff', 'password', ?)"#,
+            id, email, email, now
+        )
+        .execute(pool)
+        .await
+        .expect("insert user");
+        id
+    }
+
+    /// Insert an api_tokens row given a raw token. Returns (token_id, token_hash).
+    async fn insert_token(pool: &sqlx::SqlitePool, user_id: &str, raw_token: &str) -> (String, String) {
+        use sha2::{Digest, Sha256};
+        use uuid::Uuid;
+
+        let digest_bytes = Sha256::digest(raw_token.as_bytes());
+        let hash = digest_bytes
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
+
+        let token_id = Uuid::now_v7().to_string();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        sqlx::query!(
+            "INSERT INTO api_tokens (id, user_id, name, token_hash, created_at) VALUES (?, ?, 'test-token', ?, ?)",
+            token_id, user_id, hash, now
+        )
+        .execute(pool)
+        .await
+        .expect("insert token");
+
+        (token_id, hash)
+    }
+
+    /// A valid Bearer token resolves to the correct user.
+    #[tokio::test]
+    async fn bearer_token_resolves_user() {
+        let (_file, pool) = test_db().await;
+        let user_id = insert_user(&pool, "alice@test.com").await;
+
+        let raw = "my-test-token-abc123";
+        insert_token(&pool, &user_id, raw).await;
+
+        let limiter = RateLimiter::default();
+        let header = format!("Bearer {}", raw);
+        let user = resolve_api_user(&pool, &limiter, &header)
+            .await
+            .expect("should resolve user");
+
+        assert_eq!(user.id, user_id, "resolved user id must match");
+        assert_eq!(user.email, "alice@test.com");
+    }
+
+    /// Missing Authorization header yields 401.
+    #[tokio::test]
+    async fn bearer_token_missing_401() {
+        let (_file, pool) = test_db().await;
+        let limiter = RateLimiter::default();
+
+        // No "Bearer " prefix — scheme is wrong
+        let result = resolve_api_user(&pool, &limiter, "Basic abc").await;
+        assert!(result.is_err());
+        let status = result.unwrap_err();
+        assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    /// A token that is not in the DB yields 401.
+    #[tokio::test]
+    async fn bearer_token_unknown_token_401() {
+        let (_file, pool) = test_db().await;
+        let limiter = RateLimiter::default();
+
+        let result = resolve_api_user(&pool, &limiter, "Bearer this-token-does-not-exist").await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    /// Exceeding the rate limit yields 429.
+    #[tokio::test]
+    async fn bearer_token_rate_limit_429() {
+        let (_file, pool) = test_db().await;
+        let user_id = insert_user(&pool, "rl@test.com").await;
+
+        let raw = "rate-limit-token";
+        insert_token(&pool, &user_id, raw).await;
+
+        let limiter = RateLimiter::default();
+        let header = format!("Bearer {}", raw);
+
+        // Exhaust the 120-request budget
+        for _ in 0..120 {
+            resolve_api_user(&pool, &limiter, &header)
+                .await
+                .expect("should not fail within limit");
+        }
+
+        // 121st request should be rate-limited
+        let result = resolve_api_user(&pool, &limiter, &header).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Workspace API tests (pre-existing — kept for regression)
+// ---------------------------------------------------------------------------
 
 #[cfg(feature = "ssr")]
 mod api_tests {

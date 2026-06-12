@@ -6,6 +6,7 @@ use crate::mailer::Mailer;
 use crate::server::board_rooms::BoardRoomRegistry;
 use crate::server::user_notif_registry::UserNotifRegistry;
 use crate::server::presence_registry::PresenceRegistry;
+use crate::server::rest_api::auth::RateLimiter;
 
 /// Newtype wrappers to allow both pools to coexist in AppState with FromRef.
 /// Without these, two fields of the same `SqlitePool` type would produce conflicting FromRef impls.
@@ -33,4 +34,5 @@ pub struct AppState {
     pub board_rooms: BoardRoomRegistry,                   // per-board broadcast (RT-01)
     pub user_notifs: UserNotifRegistry,                   // per-user notification delivery (RT-04)
     pub presence: PresenceRegistry,                       // ephemeral presence (RT-03)
+    pub rate_limiter: RateLimiter,                        // per-token in-memory rate limiter (D-21)
 }
