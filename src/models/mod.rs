@@ -149,6 +149,29 @@ pub struct Attachment {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 7: Calendar DTO
+// ---------------------------------------------------------------------------
+
+/// A due-date-bearing card returned by `get_calendar_cards` (CAL-01).
+///
+/// Aggregated across all boards the user is a member of (D-11).
+/// `due_at` is epoch millis (UTC); always Some because the query filters on IS NOT NULL.
+/// `done` drives the struck-through/muted chip styling (D-14).
+/// `board_color` is the raw color string from boards.color — callers must sanitize
+/// with `safe_hex()` before CSS interpolation (T-07-11).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct CalendarCard {
+    pub id: String,
+    pub title: String,
+    pub card_num: i64,
+    pub due_at: Option<i64>,
+    pub done: bool,
+    pub board_id: String,
+    pub board_name: String,
+    pub board_color: String,
+}
+
+// ---------------------------------------------------------------------------
 // Phase 7: Inbox DTOs
 // ---------------------------------------------------------------------------
 
