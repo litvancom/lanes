@@ -17,7 +17,7 @@ use crate::{
         events::BoardEvent,
         rest_dto::{CommentDto, CreateCommentReq, PaginationParams},
     },
-    server::{rest_api::{auth::ApiUser, boards::require_member}, state::AppState},
+    server::{rest_api::{auth::ApiUser, boards::{require_member, require_member_commenter}}, state::AppState},
 };
 
 /// Resolve (board_id, card_id) from just a card_id, verifying the card exists.
@@ -142,7 +142,7 @@ pub async fn create_comment(
         Ok(b) => b,
         Err(resp) => return resp,
     };
-    if let Err(resp) = require_member(&state.read_pool.0, &board_id, &user.id).await {
+    if let Err(resp) = require_member_commenter(&state.read_pool.0, &board_id, &user.id).await {
         return resp;
     }
 

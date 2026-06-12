@@ -1384,12 +1384,12 @@ pub async fn add_comment(
     mention_user_ids: Vec<String>,
     client_id: String,
 ) -> Result<crate::models::ActivityEntry, ServerFnError> {
-    use crate::auth::helpers::require_board_member;
+    use crate::auth::helpers::require_board_commenter;
     use crate::server::state::AppState;
     use crate::models::events::{BoardEvent, NotifEvent};
 
     let state = expect_context::<AppState>();
-    let (user, _role) = require_board_member(&board_id, &state.read_pool.0).await?;
+    let user = require_board_commenter(&board_id, &state.read_pool.0).await?;
 
     // Fetch the card title for the MentionReceived payload (best-effort; ok if missing).
     let card_title: String = sqlx::query_scalar("SELECT title FROM cards WHERE id = ?")

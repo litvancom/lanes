@@ -631,7 +631,7 @@ mod token_tests {
 #[cfg(feature = "ssr")]
 mod role_tests {
     use lanes::server::db::{init_pools, run_migrations};
-    use lanes::server::rest_api::boards::{require_member, require_member_editor};
+    use lanes::server::rest_api::boards::{require_member, require_member_commenter, require_member_editor};
     use lanes::api::workspace_api::derive_key_prefix;
     use tempfile::NamedTempFile;
 
@@ -726,6 +726,37 @@ mod role_tests {
         let read_result = require_member(&pool, &board_id, &viewer).await;
         assert!(read_result.is_ok(), "viewer must still be able to read the board");
         assert_eq!(read_result.unwrap(), "viewer");
+    }
+
+    /// A viewer cannot comment (`require_member_commenter` → 403);
+    /// a commenter (or higher) is admitted.
+    #[tokio::test]
+    async fn rest_viewer_cannot_comment() {
+        let (_file, pool) = test_db().await;
+
+        let owner = insert_user(&pool, "owner3@test.com").await;
+        let viewer = insert_user(&pool, "viewer3@test.com").await;
+        let board_id = insert_board(&pool, "Comment Gate Board", &owner).await;
+        add_member(&pool, &board_id, &viewer, "viewer").await;
+
+        // Viewer must be rejected with 403.
+        let viewer_result = require_member_commenter(&pool, &board_id, &viewer).await;
+        assert!(viewer_result.is_err(), "viewer must be blocked from commenting");
+        let response = viewer_result.unwrap_err();
+        use axum::response::IntoResponse;
+        let (parts, _body) = response.into_response().into_parts();
+        assert_eq!(
+            parts.status,
+            axum::http::StatusCode::FORBIDDEN,
+            "viewer must receive 403 on comment attempt"
+        );
+
+        // Commenter must be admitted.
+        let commenter = insert_user(&pool, "commenter3@test.com").await;
+        add_member(&pool, &board_id, &commenter, "commenter").await;
+        let commenter_result = require_member_commenter(&pool, &board_id, &commenter).await;
+        assert!(commenter_result.is_ok(), "commenter must be allowed to comment");
+        assert_eq!(commenter_result.unwrap(), "commenter");
     }
 
     /// An editor member is allowed through `require_member_editor` (200-equivalent: Ok).
