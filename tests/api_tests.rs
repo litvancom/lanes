@@ -498,3 +498,128 @@ mod idor_tests {
         assert_eq!(result.unwrap(), "owner");
     }
 }
+
+// ---------------------------------------------------------------------------
+// API token management tests (Task 3 — API-03)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "ssr")]
+mod token_tests {
+    use lanes::api::token_api::create_api_token_inner;
+    use lanes::server::db::{init_pools, run_migrations};
+    use sha2::{Digest, Sha256};
+    use tempfile::NamedTempFile;
+
+    async fn test_db() -> (NamedTempFile, sqlx::SqlitePool) {
+        let file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_str().expect("path").to_string();
+        let url = format!("sqlite://{}", path);
+        let (write_pool, _read_pool) = init_pools(&url).await.expect("init pools");
+        run_migrations(&write_pool).await.expect("migrations");
+        (file, write_pool)
+    }
+
+    async fn insert_user(pool: &sqlx::SqlitePool, email: &str) -> String {
+        use uuid::Uuid;
+        let id = Uuid::now_v7().to_string();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        sqlx::query!(
+            r#"INSERT INTO users (id, email, display_name, avatar_color, auth_provider, created_at)
+               VALUES (?, ?, ?, '#7c5cff', 'password', ?)"#,
+            id, email, email, now
+        )
+        .execute(pool)
+        .await
+        .expect("insert user");
+        id
+    }
+
+    /// D-17: only the SHA-256 hash is stored in `api_tokens.token_hash`;
+    /// the raw token returned by `create_api_token_inner` is never in the DB.
+    #[tokio::test]
+    async fn token_hash_only_stored() {
+        let (_file, pool) = test_db().await;
+        let user_id = insert_user(&pool, "alice@test.com").await;
+
+        let created = create_api_token_inner("my-ci-token".to_string(), &user_id, &pool)
+            .await
+            .expect("create should succeed");
+
+        // The raw token is 64 hex chars (32 random bytes → hex)
+        assert_eq!(created.raw_token.len(), 64, "raw token must be 64 hex chars");
+        assert!(
+            created.raw_token.chars().all(|c| c.is_ascii_hexdigit()),
+            "raw token must be lowercase hex"
+        );
+
+        // Verify: DB stores the SHA-256 hash of the raw token — not the raw token itself
+        let stored_hash: Option<String> = sqlx::query_scalar(
+            "SELECT token_hash FROM api_tokens WHERE id = ?",
+        )
+        .bind(&created.id)
+        .fetch_optional(&pool)
+        .await
+        .expect("query");
+
+        let stored_hash = stored_hash.expect("token row must exist");
+
+        // Compute expected hash independently
+        let expected_hash_bytes = Sha256::digest(created.raw_token.as_bytes());
+        let expected_hash: String = expected_hash_bytes
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+
+        assert_eq!(
+            stored_hash, expected_hash,
+            "stored hash must be SHA-256 of raw token"
+        );
+        assert_ne!(
+            stored_hash, created.raw_token,
+            "stored hash must NOT equal the raw token (D-17)"
+        );
+    }
+
+    /// Revoking a token removes it from the DB; the bearer extractor subsequently rejects it.
+    #[tokio::test]
+    async fn token_revoke_invalidates() {
+        use lanes::server::rest_api::auth::{resolve_api_user, RateLimiter};
+
+        let (_file, pool) = test_db().await;
+        let user_id = insert_user(&pool, "bob@test.com").await;
+
+        let created = create_api_token_inner("revoke-test".to_string(), &user_id, &pool)
+            .await
+            .expect("create should succeed");
+
+        // Token resolves before revoke
+        let limiter = RateLimiter::default();
+        let header = format!("Bearer {}", created.raw_token);
+        let resolved = resolve_api_user(&pool, &limiter, &header)
+            .await
+            .expect("token should resolve before revoke");
+        assert_eq!(resolved.id, user_id);
+
+        // Revoke: DELETE WHERE id = ? AND user_id = ? (no IDOR — must match both)
+        sqlx::query!(
+            "DELETE FROM api_tokens WHERE id = ? AND user_id = ?",
+            created.id,
+            user_id
+        )
+        .execute(&pool)
+        .await
+        .expect("revoke delete");
+
+        // Token no longer resolves after revoke
+        let result = resolve_api_user(&pool, &limiter, &header).await;
+        assert!(result.is_err(), "revoked token must not resolve");
+        assert_eq!(
+            result.unwrap_err(),
+            axum::http::StatusCode::UNAUTHORIZED,
+            "revoked token must yield 401"
+        );
+    }
+}

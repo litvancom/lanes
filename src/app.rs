@@ -10,6 +10,7 @@ use crate::routes::archive::ArchivePage;
 use crate::routes::card_detail::CardDetailRoute;
 use crate::routes::inbox::InboxPage;
 use crate::routes::calendar::CalendarPage;
+use crate::routes::settings::SettingsPage;
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -45,6 +46,7 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/archive") view=ArchivePage/>
                 <Route path=path!("/inbox") view=InboxPage/>
                 <Route path=path!("/calendar") view=CalendarPage/>
+                <Route path=path!("/settings") view=SettingsPage/>
             </Routes>
         </Router>
     }

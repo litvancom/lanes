@@ -1,8 +1,8 @@
 //! REST API Data Transfer Objects (DTOs) for the `/api/v1` surface.
 //!
-//! All types derive `Serialize`, `Deserialize`, and `utoipa::ToSchema` so they appear
-//! in the generated OpenAPI document.  Types are intentionally flat — no nested
-//! domain models — to keep the public API stable independently of internal model changes.
+//! All types derive `Serialize` and `Deserialize` for both targets.
+//! `utoipa::ToSchema` and `utoipa::IntoParams` are gated to SSR (`cfg_attr`) so the
+//! WASM/hydrate build does not require the `utoipa` crate.
 
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 /// A board visible to the authenticated user.
-#[derive(Serialize, Deserialize, Clone, Debug, utoipa::ToSchema)]
+#[cfg_attr(feature = "ssr", derive(utoipa::ToSchema))]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BoardDto {
     pub id: String,
     pub name: String,
@@ -23,7 +24,8 @@ pub struct BoardDto {
 }
 
 /// A single list within a board.
-#[derive(Serialize, Deserialize, Clone, Debug, utoipa::ToSchema)]
+#[cfg_attr(feature = "ssr", derive(utoipa::ToSchema))]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ListDto {
     pub id: String,
     pub board_id: String,
@@ -34,7 +36,8 @@ pub struct ListDto {
 }
 
 /// A card stub (title + placement). Full card detail is not part of this API surface.
-#[derive(Serialize, Deserialize, Clone, Debug, utoipa::ToSchema)]
+#[cfg_attr(feature = "ssr", derive(utoipa::ToSchema))]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CardDto {
     pub id: String,
     pub board_id: String,
@@ -51,7 +54,8 @@ pub struct CardDto {
 }
 
 /// A comment on a card.
-#[derive(Serialize, Deserialize, Clone, Debug, utoipa::ToSchema)]
+#[cfg_attr(feature = "ssr", derive(utoipa::ToSchema))]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CommentDto {
     pub id: String,
     pub card_id: String,
@@ -61,7 +65,8 @@ pub struct CommentDto {
 }
 
 /// The caller's workspace — a single-workspace model for v1 (all boards the user is a member of).
-#[derive(Serialize, Deserialize, Clone, Debug, utoipa::ToSchema)]
+#[cfg_attr(feature = "ssr", derive(utoipa::ToSchema))]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct WorkspaceDto {
     /// Workspace identifier — always the authenticated user's own ID for v1.
     pub id: String,
@@ -75,7 +80,8 @@ pub struct WorkspaceDto {
 // ---------------------------------------------------------------------------
 
 /// Create a new board.
-#[derive(Serialize, Deserialize, Clone, Debug, utoipa::ToSchema)]
+#[cfg_attr(feature = "ssr", derive(utoipa::ToSchema))]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CreateBoardReq {
     /// Board display name (1–120 characters).
     pub name: String,
@@ -84,7 +90,8 @@ pub struct CreateBoardReq {
 }
 
 /// Update an existing board (owner-only).  Supply only the fields you want to change.
-#[derive(Serialize, Deserialize, Clone, Debug, utoipa::ToSchema)]
+#[cfg_attr(feature = "ssr", derive(utoipa::ToSchema))]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct UpdateBoardReq {
     /// New display name (1–120 characters).
     pub name: Option<String>,
@@ -93,21 +100,24 @@ pub struct UpdateBoardReq {
 }
 
 /// Create a new list at the end of a board.
-#[derive(Serialize, Deserialize, Clone, Debug, utoipa::ToSchema)]
+#[cfg_attr(feature = "ssr", derive(utoipa::ToSchema))]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CreateListReq {
     /// List name (1–120 characters).
     pub name: String,
 }
 
 /// Rename an existing list.
-#[derive(Serialize, Deserialize, Clone, Debug, utoipa::ToSchema)]
+#[cfg_attr(feature = "ssr", derive(utoipa::ToSchema))]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct UpdateListReq {
     /// New list name (1–120 characters).
     pub name: String,
 }
 
 /// Create a new card at the end of a list.
-#[derive(Serialize, Deserialize, Clone, Debug, utoipa::ToSchema)]
+#[cfg_attr(feature = "ssr", derive(utoipa::ToSchema))]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CreateCardReq {
     /// List that will receive the card.
     pub list_id: String,
@@ -116,14 +126,16 @@ pub struct CreateCardReq {
 }
 
 /// Update card fields.  Supply only the fields you want to change.
-#[derive(Serialize, Deserialize, Clone, Debug, utoipa::ToSchema)]
+#[cfg_attr(feature = "ssr", derive(utoipa::ToSchema))]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct UpdateCardReq {
     /// New title (1–500 characters).
     pub title: Option<String>,
 }
 
 /// Move a card to a different list and/or position.
-#[derive(Serialize, Deserialize, Clone, Debug, utoipa::ToSchema)]
+#[cfg_attr(feature = "ssr", derive(utoipa::ToSchema))]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct MoveCardReq {
     /// Target list ID (must belong to the same board).
     pub to_list_id: String,
@@ -132,7 +144,8 @@ pub struct MoveCardReq {
 }
 
 /// Post a comment on a card.
-#[derive(Serialize, Deserialize, Clone, Debug, utoipa::ToSchema)]
+#[cfg_attr(feature = "ssr", derive(utoipa::ToSchema))]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CreateCommentReq {
     /// Comment body (non-empty plain text; Markdown rendered on the UI side).
     pub body: String,
@@ -143,7 +156,8 @@ pub struct CreateCommentReq {
 // ---------------------------------------------------------------------------
 
 /// Query parameters for endpoints that support cursor-based pagination.
-#[derive(Serialize, Deserialize, Clone, Debug, utoipa::ToSchema, utoipa::IntoParams)]
+#[cfg_attr(feature = "ssr", derive(utoipa::ToSchema, utoipa::IntoParams))]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PaginationParams {
     /// Maximum number of items to return (default 50, max 200).
     pub limit: Option<i64>,

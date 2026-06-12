@@ -152,8 +152,12 @@ pub fn WorkspaceSidebar(
                 />
             </div>
 
-            // --- Bottom: invite teammate ---
+            // --- Bottom: settings link + invite teammate ---
             <div class="lns-sidebar-footer">
+                <a href="/settings" class="lns-sidebar-item lns-sidebar-settings-link">
+                    <Icon name="settings"/>
+                    <span>"Settings"</span>
+                </a>
                 <button type="button" class="lns-btn lns-btn--ghost lns-sidebar-invite-btn">
                     <Icon name="users"/>
                     "Invite teammate"

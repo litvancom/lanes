@@ -105,6 +105,12 @@ pub fn Icon(
         // Sparkle (4-point star) — for inbox empty state
         "sparkle" => r#"<path d="M8 1.5L9.2 6.8 14.5 8 9.2 9.2 8 14.5 6.8 9.2 1.5 8 6.8 6.8 8 1.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>"#,
 
+        // Gear / settings
+        "settings" => r#"<circle cx="8" cy="8" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M8 1.5v1M8 13.5v1M1.5 8h1M13.5 8h1M3.4 3.4l.7.7M11.9 11.9l.7.7M3.4 12.6l.7-.7M11.9 4.1l.7-.7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>"#,
+
+        // Clipboard — for token copy action
+        "clipboard" => r#"<rect x="4" y="2" width="8" height="2" rx="1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M5 3H3.5A1.5 1.5 0 002 4.5v9A1.5 1.5 0 003.5 15h9a1.5 1.5 0 001.5-1.5v-9A1.5 1.5 0 0012.5 3H11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>"#,
+
         // Unknown glyph — transparent placeholder (same dimensions)
         _ => "",
     };

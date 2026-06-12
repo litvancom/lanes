@@ -7,3 +7,4 @@ pub mod archive;
 pub mod card_detail;
 pub mod inbox;
 pub mod calendar;
+pub mod settings;

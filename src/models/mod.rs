@@ -220,6 +220,33 @@ pub struct MoveTargetBoard {
     pub lists: Vec<MoveTargetList>,
 }
 
+// ---------------------------------------------------------------------------
+// Phase 7: API Token DTOs (API-03)
+// ---------------------------------------------------------------------------
+
+/// Returned exactly once at token creation (D-17 / D-18: raw never stored, shown once only).
+///
+/// `raw_token` is the 64-char hex string shown to the user once; it is never persisted.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct CreatedToken {
+    pub id: String,
+    pub name: String,
+    /// The raw 64-char hex token.  Shown to the user once; never retrievable again.
+    pub raw_token: String,
+}
+
+/// Token metadata returned by `list_api_tokens`.
+/// Does NOT contain the token hash — callers never see the stored hash (D-17).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ApiTokenMeta {
+    pub id: String,
+    pub name: String,
+    /// Creation timestamp as epoch milliseconds (UTC).
+    pub created_at: i64,
+    /// Last-used timestamp as epoch milliseconds (UTC); None if never used via API.
+    pub last_used_at: Option<i64>,
+}
+
 /// Full card detail payload returned by `get_card_detail`.
 /// Consumed by the card-detail modal and all Phase 5 slices.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

@@ -3547,3 +3547,190 @@ input, textarea {
   color: var(--danger);
   padding: 16px 0;
 }
+
+/* ---------- Settings page (API-03) ---------- */
+
+.lns-settings-layout {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 40px 24px 80px;
+}
+
+.lns-settings-header {
+  margin-bottom: 32px;
+}
+
+.lns-settings-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.lns-settings-section {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 24px;
+  margin-bottom: 24px;
+}
+
+.lns-settings-section-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 6px;
+}
+
+.lns-settings-section-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0 0 20px;
+  line-height: 1.5;
+}
+
+/* Create token row */
+.lns-settings-token-create {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.lns-settings-token-name-input {
+  flex: 1;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg);
+  outline: none;
+}
+
+.lns-settings-token-name-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.lns-settings-token-create-btn {
+  white-space: nowrap;
+}
+
+/* Show-once reveal banner */
+.lns-settings-token-reveal {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+}
+
+.lns-settings-token-reveal-warn {
+  font-size: 13px;
+  color: var(--text-primary);
+  margin: 0 0 10px;
+}
+
+.lns-settings-token-reveal-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lns-settings-token-raw {
+  flex: 1;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  overflow-x: auto;
+  word-break: break-all;
+}
+
+.lns-settings-token-copy-btn {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Token list */
+.lns-settings-token-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--border);
+}
+
+.lns-settings-token-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.lns-settings-token-row:last-child {
+  border-bottom: none;
+}
+
+.lns-settings-token-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lns-settings-token-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.lns-settings-token-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.lns-settings-token-revoke-btn {
+  font-size: 13px;
+  color: var(--danger);
+  padding: 4px 10px;
+  height: 28px;
+}
+
+.lns-settings-token-revoke-btn:hover {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+/* States */
+.lns-settings-error {
+  font-size: 13px;
+  color: var(--danger);
+  margin: 6px 0;
+}
+
+.lns-settings-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 16px 0 0;
+  margin: 0;
+}
+
+.lns-settings-loading {
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 16px 0 0;
+  margin: 0;
+}
+
+/* Sidebar settings link */
+.lns-sidebar-settings-link {
+  margin-bottom: 4px;
+}
