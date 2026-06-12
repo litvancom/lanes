@@ -606,7 +606,7 @@ mod card_detail_api_tests {
             vec![],
         ).await;
         assert!(result.is_ok(), "add_comment_inner must succeed: {:?}", result.err());
-        let entry = result.unwrap();
+        let (entry, _mentions) = result.unwrap();
         assert_eq!(entry.entry_type, "comment", "returned entry_type must be 'comment'");
         assert_eq!(entry.text, "Hello, world!", "returned text must match body");
 
