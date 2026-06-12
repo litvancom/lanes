@@ -69,6 +69,12 @@ RUN apt-get update -y \
 # Non-root user for container isolation (D-22, T-07-22)
 RUN useradd -r -s /bin/false lanes
 
+# Pre-create the data dir owned by the non-root user. When the named volume (D-24)
+# is first mounted at /data, Docker seeds it with this directory's ownership, so the
+# non-root `lanes` process can create /data/lanes.db. Without this the fresh volume is
+# root-owned and SQLite fails with SQLITE_CANTOPEN (code 14).
+RUN mkdir -p /data && chown lanes:lanes /data
+
 # Copy binary and static site assets from builder
 COPY --from=builder /app/target/release/lanes /app/lanes
 COPY --from=builder /app/target/site /app/site
