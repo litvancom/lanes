@@ -157,15 +157,28 @@ pub async fn create_card(
                 },
             });
 
-            // Fetch created_at / updated_at (create_card_inner doesn't return them)
-            let timestamps: Option<(i64, i64)> = sqlx::query_as(
+            // Fetch created_at / updated_at (create_card_inner doesn't return them).
+            // Never fabricate epoch-0 on error: the row exists with correct values, so a
+            // failed/raced follow-up read is a server fault, not a 1970 timestamp.
+            let timestamps: Option<(i64, i64)> = match sqlx::query_as(
                 "SELECT created_at, updated_at FROM cards WHERE id = ?",
             )
             .bind(&card.id)
             .fetch_optional(&state.read_pool.0)
-            .await
-            .unwrap_or(None);
-            let (created_at, updated_at) = timestamps.unwrap_or((0, 0));
+            .await {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!("create_card timestamp re-fetch error: {e}");
+                    return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "internal error"}))).into_response();
+                }
+            };
+            let (created_at, updated_at) = match timestamps {
+                Some(ts) => ts,
+                None => {
+                    tracing::error!("create_card timestamp re-fetch returned no row for card {}", card.id);
+                    return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "internal error"}))).into_response();
+                }
+            };
 
             let dto = CardDto {
                 id: card.id,
