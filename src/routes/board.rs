@@ -385,6 +385,7 @@ pub fn BoardPage() -> impl IntoView {
                                         board=board_clone
                                         search=board_signals.search
                                         labels_expanded=board_signals.labels_expanded
+                                        is_owner=data.viewer_is_owner
                                     />
 
                                     // Board canvas — horizontal scroll, gap 12px, padding 16px 20px

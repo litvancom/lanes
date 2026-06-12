@@ -13,6 +13,9 @@ pub struct BoardData {
     pub lists: Vec<List>,
     pub cards: Vec<Card>,
     pub board_seq: u64,
+    /// True when the authenticated viewer holds the `owner` role on this board.
+    /// Used by the board header to show the owner-only Share button.
+    pub viewer_is_owner: bool,
 }
 
 /// Internal: fetch a BoardData for a given (board_id, user_id) pair.
@@ -27,7 +30,8 @@ pub async fn get_board_inner(
 ) -> Result<BoardData, sqlx::Error> {
     // Fetch BoardWithMeta for this user — scoped by both board_id AND user_id.
     // Returns None if the user is not a member (D-12 enforced in wrapper).
-    let board_row: Option<(String, String, String, String, bool, bool, i64, Option<i64>, i64, i64)> =
+    // m.role is included so we can propagate viewer_is_owner to the board header.
+    let board_row: Option<(String, String, String, String, bool, bool, i64, Option<i64>, i64, i64, String)> =
         sqlx::query_as(
             r#"SELECT b.id, b.name, b.key_prefix, b.color,
                       CAST(m.starred AS BOOLEAN) as starred,
@@ -36,7 +40,8 @@ pub async fn get_board_inner(
                        JOIN lists l ON l.id = c.list_id
                        WHERE l.board_id = b.id AND c.archived = 0) as card_count,
                       m.last_viewed_at,
-                      b.created_at, b.updated_at
+                      b.created_at, b.updated_at,
+                      m.role
                FROM boards b
                JOIN board_members m ON m.board_id = b.id
                WHERE b.id = ? AND m.user_id = ?"#
@@ -50,6 +55,8 @@ pub async fn get_board_inner(
         // D-12: generic "board not found" for non-members — does not reveal existence
         sqlx::Error::Decode("board not found".into())
     })?;
+
+    let viewer_is_owner = row.10 == "owner";
 
     // Decompose the tuple into BoardWithMeta (maps to the pattern)
     let board = BoardWithMeta {
@@ -150,7 +157,7 @@ pub async fn get_board_inner(
 
     // board_seq is set by the #[server] get_board wrapper (which has AppState access).
     // get_board_inner is called from tests directly — board_seq defaults to 0 there.
-    Ok(BoardData { board, lists, cards, board_seq: 0 })
+    Ok(BoardData { board, lists, cards, board_seq: 0, viewer_is_owner })
 }
 
 /// Internal: update board_members.last_viewed_at for a specific (board, user) pair.
