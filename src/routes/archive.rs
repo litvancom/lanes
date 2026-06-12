@@ -25,6 +25,7 @@ use crate::components::topbar::WorkspaceTopbar;
 use crate::components::icon::Icon;
 use crate::models::BoardWithMeta;
 use crate::components::board_card::safe_hex;
+use crate::state::ws_client::spawn_notif_task;
 
 /// A muted archived board card with Restore and owner-only Delete actions.
 ///
@@ -185,6 +186,21 @@ pub fn ArchivePage() -> impl IntoView {
 
                     let display_name = user.display_name.clone();
 
+                    // ── RT-04 Notification badge (06-06) ──────────────────────────────────
+                    // Open a per-user notification WebSocket so the sidebar badge updates live.
+                    // spawn_notif_task re-seeds via get_unread_count() on every connect.
+                    // on_cleanup drops the WsHandle on navigate-away (Anti-Pattern §717).
+                    let unread_count = RwSignal::new(0i64);
+                    let badge_pulse = RwSignal::new(false);
+                    {
+                        let notif_handle = StoredValue::new(
+                            Some(spawn_notif_task(unread_count, badge_pulse))
+                        );
+                        on_cleanup(move || {
+                            notif_handle.update_value(|h| { h.take(); });
+                        });
+                    }
+
                     // on_new_board is a no-op on the archive page
                     let on_new_board: Callback<()> = Callback::new(|_| {});
 
@@ -203,6 +219,8 @@ pub fn ArchivePage() -> impl IntoView {
                                         .unwrap_or_default()
                                 })
                                 on_star=star_cb
+                                unread_count=unread_count
+                                badge_pulse=badge_pulse
                             />
 
                             // Main column
