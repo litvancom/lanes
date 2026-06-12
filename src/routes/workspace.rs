@@ -5,6 +5,7 @@ use crate::api::workspace_api::{
     ToggleStarBoard,
 };
 use crate::api::auth_api::get_current_user;
+use crate::api::notification_api::get_unread_count;
 use crate::components::board_card::BoardCard;
 use crate::components::sidebar::WorkspaceSidebar;
 use crate::components::topbar::WorkspaceTopbar;
@@ -124,6 +125,25 @@ pub fn WorkspacePage() -> impl IntoView {
                     let display_name_for_topbar = user.display_name.clone();
                     let fname = first_name(&user_name).to_string();
 
+                    // ── RT-04 Notification badge (06-05) ──────────────────────────────────
+                    // Seed the inbox badge count on workspace page load.
+                    // On the workspace page there is no WS connection so the badge is static
+                    // (reflects count at page-load time). Live updates only when a board is open.
+                    let unread_count = RwSignal::new(0i64);
+                    let badge_pulse = RwSignal::new(false);
+                    {
+                        let sig = unread_count;
+                        Effect::new(move |_| {
+                            #[cfg(target_arch = "wasm32")]
+                            wasm_bindgen_futures::spawn_local(async move {
+                                if let Ok(count) = get_unread_count().await {
+                                    sig.set(count);
+                                }
+                            });
+                            let _ = sig;
+                        });
+                    }
+
                     // ── Layout ─────────────────────────────────────────────────────────────
                     view! {
                         <div class="lns-app">
@@ -140,6 +160,8 @@ pub fn WorkspacePage() -> impl IntoView {
                                         .unwrap_or_default()
                                 })
                                 on_star=star_cb
+                                unread_count=unread_count
+                                badge_pulse=badge_pulse
                             />
 
                             // Main column: topbar + content

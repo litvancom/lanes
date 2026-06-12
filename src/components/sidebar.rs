@@ -8,7 +8,7 @@ use crate::components::board_card::safe_hex;
 ///
 /// Contains:
 /// - Logo row (top)
-/// - Nav items: Boards (active on /), Inbox (inert, D-12), Calendar (inert, D-12), Archive
+/// - Nav items: Boards (active on /), Inbox (live badge, D-12 inert route until Phase 7), Calendar (inert), Archive
 /// - Starred boards section — hidden entirely if no boards starred (D-04)
 /// - All boards list (chip + name links)
 /// - Bottom: "Invite teammate" ghost button
@@ -18,6 +18,9 @@ use crate::components::board_card::safe_hex;
 /// - Nav item padding: 7px 10px (handoff-locked, UI-SPEC Spacing Exceptions)
 /// - Section headers: 11px/600 uppercase, --text-muted
 /// - Inert items: --text-muted, cursor default, aria-disabled (D-12)
+///
+/// RT-04: Inbox nav item now carries a live `.lns-sidebar-badge` driven by `unread_count`.
+/// The route is still inert (Phase 7 wires /inbox); the badge is live now (UI-SPEC §7).
 ///
 /// Threat mitigations:
 /// - T-03-22: board names escaped by Leptos view! (no inner_html)
@@ -30,6 +33,13 @@ pub fn WorkspaceSidebar(
     starred_boards: Signal<Vec<BoardWithMeta>>,
     /// Callback invoked with board_id when the user stars/unstars from the sidebar list.
     on_star: Callback<String>,
+    /// Live unread notification count (RT-04). Seeds from server, patched by WS events.
+    /// Drives the inbox badge; hidden when 0, shows "99+" above 99 (UI-SPEC §7).
+    #[prop(default = RwSignal::new(0))]
+    unread_count: RwSignal<i64>,
+    /// True for ~200ms when unread_count increments — triggers CSS pulse (UI-SPEC §301).
+    #[prop(default = RwSignal::new(false))]
+    badge_pulse: RwSignal<bool>,
 ) -> impl IntoView {
     view! {
         <aside class="lns-sidebar">
@@ -46,10 +56,27 @@ pub fn WorkspaceSidebar(
                     <span>"Boards"</span>
                 </a>
 
-                // Inbox — inert (D-12): no route, no badge; full markup for pixel fidelity
+                // Inbox — route-inert until Phase 7 (D-12), but carries a live badge (RT-04).
+                // The badge shows the live unread count, hides at 0, and shows "99+" above 99.
                 <span class="lns-sidebar-item lns-sidebar-item--inert" aria-disabled="true">
                     <Icon name="inbox"/>
                     <span>"Inbox"</span>
+                    <Show when=move || { unread_count.get() > 0 }>
+                        <span
+                            class=move || {
+                                if badge_pulse.get() {
+                                    "lns-sidebar-badge lns-sidebar-badge--pulse"
+                                } else {
+                                    "lns-sidebar-badge"
+                                }
+                            }
+                        >
+                            {move || {
+                                let c = unread_count.get();
+                                if c > 99 { "99+".to_string() } else { c.to_string() }
+                            }}
+                        </span>
+                    </Show>
                 </span>
 
                 // Calendar — inert (D-12): no route; full markup for pixel fidelity

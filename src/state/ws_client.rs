@@ -20,7 +20,7 @@
 
 use leptos::prelude::*;
 use crate::routes::board::{BoardSignals, PresenceViewer, WsSendFn};
-use crate::models::events::{BoardEvent, PresenceEvent, WsEnvelope};
+use crate::models::events::{BoardEvent, NotifEvent, PresenceEvent, WsEnvelope};
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 // ---------------------------------------------------------------------------
@@ -199,8 +199,8 @@ async fn run_ws_session(
                         apply_board_event_async(signals_msg, payload, &own_id).await;
                     });
                 }
-                Ok(WsEnvelope::User { .. }) => {
-                    // 06-05: notification badge patching
+                Ok(WsEnvelope::User { payload }) => {
+                    apply_notif_event(signals_msg, payload);
                 }
                 Ok(WsEnvelope::Presence { payload }) => {
                     let own_id = signals_msg
@@ -534,6 +534,36 @@ fn apply_presence_event(signals: BoardSignals, event: PresenceEvent, _own_client
                     m.retain(|_, v| !v.is_empty());
                 }
             });
+        }
+    }
+}
+
+/// Apply a `NotifEvent` from the per-user WS channel (RT-04).
+///
+/// Called from the `WsEnvelope::User` arm of the onmessage handler.
+/// Patches the global unread-count signal and triggers the badge pulse on increment.
+fn apply_notif_event(signals: BoardSignals, event: NotifEvent) {
+    match event {
+        NotifEvent::UnreadCountUpdated { count } => {
+            let prev = signals.unread_count.get_untracked();
+            signals.unread_count.set(count);
+            // Pulse the badge only when the count increased (UI-SPEC §301).
+            if count > prev {
+                signals.badge_pulse.set(true);
+                // Clear the pulse flag after 200ms (UI-SPEC §329: animation duration).
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let pulse_sig = signals.badge_pulse;
+                    wasm_bindgen_futures::spawn_local(async move {
+                        gloo_timers::future::TimeoutFuture::new(200).await;
+                        pulse_sig.set(false);
+                    });
+                }
+            }
+        }
+        NotifEvent::MentionReceived { .. } => {
+            // Inbox list UI is Phase 7. The UnreadCountUpdated event arrives immediately
+            // after MentionReceived, so the badge will update. No action needed here.
         }
     }
 }

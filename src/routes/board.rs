@@ -21,6 +21,7 @@ use std::collections::{HashMap, HashSet};
 use crate::models::Card;
 use crate::api::board_api::{get_board, TouchLastViewed};
 use crate::api::auth_api::get_current_user;
+use crate::api::notification_api::get_unread_count;
 use crate::api::list_api::{CreateList, RenameList, ReorderList};
 use crate::api::card_api::MoveCard;
 use crate::components::board_header::BoardHeader;
@@ -160,6 +161,14 @@ pub struct BoardSignals {
     /// stack (SC5: you don't see yourself). Set once during BoardPage mount via a server fn.
     /// None on SSR (not needed server-side).
     pub own_user_id: RwSignal<Option<String>>,
+    // ── RT-04 Notification badge (06-05) ──────────────────────────────────────
+    /// Live unread notification count — seeds from get_unread_count() and is patched live by
+    /// NotifEvent::UnreadCountUpdated arriving on the per-user WS channel.
+    /// Drives the sidebar inbox badge (UI-SPEC §7).
+    pub unread_count: RwSignal<i64>,
+    /// True for ~200ms when unread_count increments — triggers the CSS pulse animation.
+    /// Set by the WsEnvelope::User dispatch arm; cleared by a TimeoutFuture.
+    pub badge_pulse: RwSignal<bool>,
 }
 
 /// Board view page component (`/board/:id`).
@@ -310,6 +319,9 @@ pub fn BoardPage() -> impl IntoView {
                                     typing_card_ids: RwSignal::new(HashMap::new()),
                                     ws_send: StoredValue::new(None),
                                     own_user_id: RwSignal::new(None),
+                                    // RT-04 notification badge (06-05)
+                                    unread_count: RwSignal::new(0),
+                                    badge_pulse: RwSignal::new(false),
                                 };
 
                                 // Provide context for all child components
@@ -329,6 +341,23 @@ pub fn BoardPage() -> impl IntoView {
                                             }
                                         });
                                         let _ = own_uid_sig; // suppress unused warning in SSR
+                                    });
+                                }
+
+                                // ── RT-04 Unread count seed (06-05) ────────────────────────
+                                // Fetch initial unread notification count client-side so the
+                                // sidebar badge shows the correct number on board load.
+                                // Live updates arrive over the per-user WS channel.
+                                {
+                                    let unread_sig = board_signals.unread_count;
+                                    Effect::new(move |_| {
+                                        #[cfg(target_arch = "wasm32")]
+                                        wasm_bindgen_futures::spawn_local(async move {
+                                            if let Ok(count) = get_unread_count().await {
+                                                unread_sig.set(count);
+                                            }
+                                        });
+                                        let _ = unread_sig; // suppress unused warning in SSR
                                     });
                                 }
 
