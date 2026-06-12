@@ -182,15 +182,15 @@ pub async fn create_card(
     title: String,
     client_id: String,
 ) -> Result<Card, ServerFnError> {
-    use crate::auth::helpers::require_board_member;
+    use crate::auth::helpers::require_board_editor;
     use crate::api::list_api::board_id_for_list;
     use crate::server::state::AppState;
     use crate::models::events::{BoardEvent, CardSummary};
 
     let state = expect_context::<AppState>();
 
-    // Auth + membership gate first (T-04-04)
-    require_board_member(&board_id, &state.read_pool.0).await?;
+    // Auth + editor-role gate first (T-04-04)
+    require_board_editor(&board_id, &state.read_pool.0).await?;
 
     // Verify the target list actually belongs to the authorized board. The membership
     // gate authorizes against the client-supplied board_id but does NOT tie the
@@ -280,14 +280,14 @@ pub async fn move_card(
     new_position: String,
     client_id: String,
 ) -> Result<(), ServerFnError> {
-    use crate::auth::helpers::require_board_member;
+    use crate::auth::helpers::require_board_editor;
     use crate::server::state::AppState;
     use crate::models::events::BoardEvent;
 
     let state = expect_context::<AppState>();
 
-    // Auth + membership gate first (T-04-08)
-    let (actor, _role) = require_board_member(&board_id, &state.read_pool.0).await?;
+    // Auth + editor-role gate first (T-04-08)
+    let actor = require_board_editor(&board_id, &state.read_pool.0).await?;
 
     // Re-validate position (T-04-09: mirrors reorder_list wrapper lines 237-242)
     {
