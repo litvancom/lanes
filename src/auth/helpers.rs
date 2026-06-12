@@ -1,6 +1,7 @@
 use leptos::prelude::ServerFnError;
 use crate::auth::backend::EmailPasswordBackend;
 use crate::auth::models::AuthUser;
+use crate::auth::role::Role;
 
 /// Type alias hiding the backend type from calling code (D-04).
 pub type AuthSession = axum_login::AuthSession<EmailPasswordBackend>;
@@ -58,5 +59,44 @@ pub async fn require_board_member(
         Some(r) => Ok((user, r)),
         // D-12: never reveal existence for the genuine non-member / deleted-board case.
         None => Err(ServerFnError::new("board not found")),
+    }
+}
+
+/// Require the caller be an editor or owner of the board.
+#[cfg(feature = "ssr")]
+pub async fn require_board_editor(
+    board_id: &str,
+    pool: &sqlx::SqlitePool,
+) -> Result<AuthUser, ServerFnError> {
+    let (user, role) = require_board_member(board_id, pool).await?;
+    match Role::parse(&role) {
+        Some(r) if r.can_edit() => Ok(user),
+        _ => Err(ServerFnError::new("read-only access")),
+    }
+}
+
+/// Require the caller be a commenter, editor, or owner of the board.
+#[cfg(feature = "ssr")]
+pub async fn require_board_commenter(
+    board_id: &str,
+    pool: &sqlx::SqlitePool,
+) -> Result<AuthUser, ServerFnError> {
+    let (user, role) = require_board_member(board_id, pool).await?;
+    match Role::parse(&role) {
+        Some(r) if r.can_comment() => Ok(user),
+        _ => Err(ServerFnError::new("read-only access")),
+    }
+}
+
+/// Require the caller be the board owner.
+#[cfg(feature = "ssr")]
+pub async fn require_board_owner(
+    board_id: &str,
+    pool: &sqlx::SqlitePool,
+) -> Result<AuthUser, ServerFnError> {
+    let (user, role) = require_board_member(board_id, pool).await?;
+    match Role::parse(&role) {
+        Some(Role::Owner) => Ok(user),
+        _ => Err(ServerFnError::new("Only the board owner can perform this action")),
     }
 }
