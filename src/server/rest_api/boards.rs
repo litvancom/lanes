@@ -237,13 +237,18 @@ pub async fn update_board(
     }
 
     // Fetch current board values so we can apply partial updates
-    let current: Option<(String, String, String, String, bool, i64, i64)> = sqlx::query_as(
+    let current: Option<(String, String, String, String, bool, i64, i64)> = match sqlx::query_as(
         "SELECT id, name, color, key_prefix, CAST(archived AS BOOLEAN), created_at, updated_at FROM boards WHERE id = ?",
     )
     .bind(&board_id)
     .fetch_optional(&state.read_pool.0)
-    .await
-    .unwrap_or(None);
+    .await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("update_board fetch current board error: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "internal error"}))).into_response();
+        }
+    };
 
     let (cur_id, cur_name, cur_color, cur_key_prefix, cur_archived, cur_created_at, _) = match current {
         Some(row) => row,

@@ -197,13 +197,18 @@ pub async fn update_list(
     }
 
     // Verify list belongs to this board (IDOR — list_id could be on another board)
-    let owning_board: Option<(String,)> = sqlx::query_as(
+    let owning_board: Option<(String,)> = match sqlx::query_as(
         "SELECT board_id FROM lists WHERE id = ?",
     )
     .bind(&list_id)
     .fetch_optional(&state.read_pool.0)
-    .await
-    .unwrap_or(None);
+    .await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("update_list list lookup error: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "internal error"}))).into_response();
+        }
+    };
 
     match owning_board {
         Some((b,)) if b == board_id => {}
@@ -282,13 +287,18 @@ pub async fn delete_list(
     }
 
     // Verify list belongs to this board
-    let owning_board: Option<(String,)> = sqlx::query_as(
+    let owning_board: Option<(String,)> = match sqlx::query_as(
         "SELECT board_id FROM lists WHERE id = ?",
     )
     .bind(&list_id)
     .fetch_optional(&state.read_pool.0)
-    .await
-    .unwrap_or(None);
+    .await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("delete_list list lookup error: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "internal error"}))).into_response();
+        }
+    };
 
     match owning_board {
         Some((b,)) if b == board_id => {}
