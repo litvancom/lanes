@@ -79,7 +79,7 @@ mod bearer_tests {
 
         let limiter = RateLimiter::default();
         let header = format!("Bearer {}", raw);
-        let user = resolve_api_user(&pool, &limiter, &header)
+        let user = resolve_api_user(&pool, &pool, &limiter, &header)
             .await
             .expect("should resolve user");
 
@@ -94,7 +94,7 @@ mod bearer_tests {
         let limiter = RateLimiter::default();
 
         // No "Bearer " prefix — scheme is wrong
-        let result = resolve_api_user(&pool, &limiter, "Basic abc").await;
+        let result = resolve_api_user(&pool, &pool, &limiter, "Basic abc").await;
         assert!(result.is_err());
         let status = result.unwrap_err();
         assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
@@ -106,7 +106,7 @@ mod bearer_tests {
         let (_file, pool) = test_db().await;
         let limiter = RateLimiter::default();
 
-        let result = resolve_api_user(&pool, &limiter, "Bearer this-token-does-not-exist").await;
+        let result = resolve_api_user(&pool, &pool, &limiter, "Bearer this-token-does-not-exist").await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), axum::http::StatusCode::UNAUTHORIZED);
     }
@@ -125,13 +125,13 @@ mod bearer_tests {
 
         // Exhaust the 120-request budget
         for _ in 0..120 {
-            resolve_api_user(&pool, &limiter, &header)
+            resolve_api_user(&pool, &pool, &limiter, &header)
                 .await
                 .expect("should not fail within limit");
         }
 
         // 121st request should be rate-limited
-        let result = resolve_api_user(&pool, &limiter, &header).await;
+        let result = resolve_api_user(&pool, &pool, &limiter, &header).await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), axum::http::StatusCode::TOO_MANY_REQUESTS);
     }
@@ -598,7 +598,7 @@ mod token_tests {
         // Token resolves before revoke
         let limiter = RateLimiter::default();
         let header = format!("Bearer {}", created.raw_token);
-        let resolved = resolve_api_user(&pool, &limiter, &header)
+        let resolved = resolve_api_user(&pool, &pool, &limiter, &header)
             .await
             .expect("token should resolve before revoke");
         assert_eq!(resolved.id, user_id);
@@ -614,7 +614,7 @@ mod token_tests {
         .expect("revoke delete");
 
         // Token no longer resolves after revoke
-        let result = resolve_api_user(&pool, &limiter, &header).await;
+        let result = resolve_api_user(&pool, &pool, &limiter, &header).await;
         assert!(result.is_err(), "revoked token must not resolve");
         assert_eq!(
             result.unwrap_err(),

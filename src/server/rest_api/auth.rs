@@ -94,13 +94,18 @@ pub struct ApiUser(pub AuthUser);
 
 /// Inner resolution logic, separated so it can be unit-tested without a live HTTP socket.
 ///
-/// Given a raw header value (the full `Authorization` header) and a pool reference, returns
-/// the resolved `AuthUser` or an HTTP status indicating the failure reason.
+/// Given a raw header value (the full `Authorization` header), a read pool for the lookup,
+/// and a write pool for the `last_used_at` update, returns the resolved `AuthUser` or an HTTP
+/// status indicating the failure reason.
+///
+/// The lookup runs against `read_pool`; the fire-and-forget `last_used_at` UPDATE runs against
+/// `write_pool` because the read pool is opened `.read_only(true)` and would reject the write.
 ///
 /// **Security:** the raw header value is never passed to `tracing::*` (T-07-16).
 #[cfg(feature = "ssr")]
 pub async fn resolve_api_user(
-    pool: &sqlx::SqlitePool,
+    read_pool: &sqlx::SqlitePool,
+    write_pool: &sqlx::SqlitePool,
     rate_limiter: &RateLimiter,
     auth_header_value: &str,
 ) -> Result<AuthUser, StatusCode> {
@@ -124,7 +129,7 @@ pub async fn resolve_api_user(
          WHERE t.token_hash = ?",
     )
     .bind(&hash)
-    .fetch_optional(pool)
+    .fetch_optional(read_pool)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -137,15 +142,19 @@ pub async fn resolve_api_user(
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
 
-    // 5. Fire-and-forget last_used_at update
-    let pool_clone = pool.clone();
+    // 5. Fire-and-forget last_used_at update — MUST use the write pool: the read pool is
+    //    opened `.read_only(true)`, so this UPDATE would be rejected with SQLITE_READONLY.
+    let write = write_pool.clone();
     let tid = token_id.clone();
     tokio::spawn(async move {
         let now = chrono::Utc::now().timestamp_millis();
-        let _ =
+        if let Err(e) =
             sqlx::query!("UPDATE api_tokens SET last_used_at = ? WHERE id = ?", now, tid)
-                .execute(&pool_clone)
-                .await;
+                .execute(&write)
+                .await
+        {
+            tracing::warn!("last_used_at update failed for token_id={tid}: {e}");
+        }
     });
 
     Ok(AuthUser {
@@ -178,7 +187,7 @@ impl FromRequestParts<AppState> for ApiUser {
             .and_then(|v| v.to_str().ok())
             .ok_or_else(|| err(StatusCode::UNAUTHORIZED, "missing Authorization header"))?;
 
-        resolve_api_user(&state.read_pool.0, &state.rate_limiter, auth_value)
+        resolve_api_user(&state.read_pool.0, &state.write_pool.0, &state.rate_limiter, auth_value)
             .await
             .map(ApiUser)
             .map_err(|status| match status {
