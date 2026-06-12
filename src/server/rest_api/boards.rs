@@ -17,6 +17,7 @@ use axum::{
 };
 
 use crate::{
+    auth::role::Role,
     models::rest_dto::{BoardDto, CreateBoardReq, UpdateBoardReq},
     server::{
         rest_api::auth::ApiUser,
@@ -52,6 +53,32 @@ pub async fn require_member(
     row.map(|(role,)| role).ok_or_else(|| {
         (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "board not found"}))).into_response()
     })
+}
+
+/// REST: require editor-or-owner. Returns the role string on success; 403 otherwise.
+pub async fn require_member_editor(
+    pool: &sqlx::SqlitePool,
+    board_id: &str,
+    user_id: &str,
+) -> Result<String, Response> {
+    let role = require_member(pool, board_id, user_id).await?;
+    match Role::parse(&role) {
+        Some(r) if r.can_edit() => Ok(role),
+        _ => Err((StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "read-only access"}))).into_response()),
+    }
+}
+
+/// REST: require commenter-or-higher. Returns the role string on success; 403 otherwise.
+pub async fn require_member_commenter(
+    pool: &sqlx::SqlitePool,
+    board_id: &str,
+    user_id: &str,
+) -> Result<String, Response> {
+    let role = require_member(pool, board_id, user_id).await?;
+    match Role::parse(&role) {
+        Some(r) if r.can_comment() => Ok(role),
+        _ => Err((StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "read-only access"}))).into_response()),
+    }
 }
 
 // ---------------------------------------------------------------------------
