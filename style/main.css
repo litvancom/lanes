@@ -1845,6 +1845,7 @@ input, textarea {
   font-weight: 600;
   color: var(--text-inverse);
   flex-shrink: 0;
+  cursor: pointer;
 }
 
 /* =====================================================================

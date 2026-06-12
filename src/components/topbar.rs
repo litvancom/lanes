@@ -205,6 +205,7 @@ pub fn WorkspaceTopbar(
                 <div
                     class="lns-avatar-bubble"
                     style="background: var(--text); color: var(--text-inverse);"
+                    title=format!("{} (you)", display_name)
                     aria-label=format!("Account: {}", display_name)
                 >
                     {initial}
