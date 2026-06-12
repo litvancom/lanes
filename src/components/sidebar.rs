@@ -56,9 +56,9 @@ pub fn WorkspaceSidebar(
                     <span>"Boards"</span>
                 </a>
 
-                // Inbox — route-inert until Phase 7 (D-12), but carries a live badge (RT-04).
+                // Inbox — wired to /inbox (Phase 7, 07-02). Badge is live (RT-04).
                 // The badge shows the live unread count, hides at 0, and shows "99+" above 99.
-                <span class="lns-sidebar-item lns-sidebar-item--inert" aria-disabled="true">
+                <a href="/inbox" class="lns-sidebar-item">
                     <Icon name="inbox"/>
                     <span>"Inbox"</span>
                     <Show when=move || { unread_count.get() > 0 }>
@@ -77,7 +77,7 @@ pub fn WorkspaceSidebar(
                             }}
                         </span>
                     </Show>
-                </span>
+                </a>
 
                 // Calendar — inert (D-12): no route; full markup for pixel fidelity
                 <span class="lns-sidebar-item lns-sidebar-item--inert" aria-disabled="true">

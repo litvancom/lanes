@@ -8,6 +8,7 @@ use crate::routes::invite::InviteAcceptPage;
 use crate::routes::board::BoardPage;
 use crate::routes::archive::ArchivePage;
 use crate::routes::card_detail::CardDetailRoute;
+use crate::routes::inbox::InboxPage;
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -41,6 +42,7 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("") view=|| ()/>
                 </ParentRoute>
                 <Route path=path!("/archive") view=ArchivePage/>
+                <Route path=path!("/inbox") view=InboxPage/>
             </Routes>
         </Router>
     }
