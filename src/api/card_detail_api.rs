@@ -1212,7 +1212,8 @@ pub async fn log_card_event_inner(
 /// 5. For each distinct mention_user_id where user != author AND user is a board member:
 ///    INSERT INTO notifications (kind='mention', read=0).
 ///
-/// Returns the new comment as an ActivityEntry (entry_type "comment").
+/// Returns (ActivityEntry, Vec<notified_user_id>) — the caller uses the user_id list to publish
+/// NotifEvent over UserNotifRegistry (T-6-19: per-user channel, not board broadcast).
 #[cfg(feature = "ssr")]
 pub async fn add_comment_inner(
     pool: &sqlx::SqlitePool,
@@ -1221,7 +1222,7 @@ pub async fn add_comment_inner(
     author_id: &str,
     body: String,
     mention_user_ids: Vec<String>,
-) -> Result<crate::models::ActivityEntry, sqlx::Error> {
+) -> Result<(crate::models::ActivityEntry, Vec<String>), sqlx::Error> {
     use uuid::Uuid;
     use crate::server::now_millis;
     use std::collections::HashSet;
@@ -1271,6 +1272,7 @@ pub async fn add_comment_inner(
 
     // 4. Mention notifications: only for distinct board members who are not the author
     let deduped: HashSet<String> = mention_user_ids.into_iter().collect();
+    let mut notified_user_ids: Vec<String> = Vec::new();
     for uid in deduped {
         if uid == author_id {
             // Self-mention suppressed (D-11, T-05-15)
@@ -1301,6 +1303,9 @@ pub async fn add_comment_inner(
         .bind(now)
         .execute(&mut *tx)
         .await?;
+
+        // Track the user who received a notification row (for UserNotifRegistry publish).
+        notified_user_ids.push(uid);
     }
 
     tx.commit().await?;
@@ -1317,14 +1322,16 @@ pub async fn add_comment_inner(
         crate::models::UserSummary { id, display_name, avatar_color }
     });
 
-    Ok(crate::models::ActivityEntry {
+    let entry = crate::models::ActivityEntry {
         entry_type: "comment".to_string(),
         id: comment_id,
         author,
         text: body,
         payload: None,
         created_at: now,
-    })
+    };
+
+    Ok((entry, notified_user_ids))
 }
 
 // ---------------------------------------------------------------------------
@@ -1336,6 +1343,7 @@ pub async fn add_comment_inner(
 /// Security (T-05-16): board membership required; comment scoped to card on that board.
 /// Security (T-05-13): comment body returned as ActivityEntry.text — rendered as text node in UI.
 /// Security (T-05-14/15): mention notifications only for board members; self excluded.
+/// RT-04: publishes MentionReceived + UnreadCountUpdated over the per-user channel (T-6-19/20/21).
 /// `client_id`: opaque per-connection UUID for D-05 self-echo suppression (T-6-03).
 #[server]
 pub async fn add_comment(
@@ -1347,12 +1355,32 @@ pub async fn add_comment(
 ) -> Result<crate::models::ActivityEntry, ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
-    use crate::models::events::BoardEvent;
+    use crate::models::events::{BoardEvent, NotifEvent};
 
     let state = expect_context::<AppState>();
     let (user, _role) = require_board_member(&board_id, &state.read_pool.0).await?;
 
-    let entry = add_comment_inner(
+    // Fetch the card title for the MentionReceived payload (best-effort; ok if missing).
+    let card_title: String = sqlx::query_scalar("SELECT title FROM cards WHERE id = ?")
+        .bind(&card_id)
+        .fetch_optional(&state.read_pool.0)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+
+    // Fetch the commenter's display_name for the MentionReceived payload.
+    let from_user_name: String = sqlx::query_scalar(
+        "SELECT display_name FROM users WHERE id = ?",
+    )
+    .bind(&user.id)
+    .fetch_optional(&state.read_pool.0)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_else(|| user.id.clone());
+
+    let (entry, notified_user_ids) = add_comment_inner(
         &state.write_pool.0,
         &board_id,
         &card_id,
@@ -1366,20 +1394,53 @@ pub async fn add_comment(
         ServerFnError::new("Couldn't save changes. Try again.")
     })?;
 
-    // Publish CommentAdded after successful DB write (T-6-07).
+    // Publish CommentAdded to the board broadcast channel (T-6-07).
     let seq = state.board_rooms.next_seq(&board_id);
     state.board_rooms.publish(
         &board_id,
         BoardEvent::CommentAdded {
             board_seq: seq,
             client_id,
-            card_id,
+            card_id: card_id.clone(),
             comment_id: entry.id.clone(),
             author_id: user.id.clone(),
             text: entry.text.clone(),
             created_at: entry.created_at,
         },
     );
+
+    // RT-04: publish per-user notification events to each mentioned board member.
+    // T-6-19: per-user channel (not board broadcast); only the mentioned user receives it.
+    // T-6-20: publish key is server-resolved user_id from the DB check in add_comment_inner.
+    // T-6-22: count is computed server-side; never client-supplied.
+    for uid in &notified_user_ids {
+        // Compute fresh unread count for this user (T-6-22).
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND read = 0",
+        )
+        .bind(uid)
+        .fetch_one(&state.read_pool.0)
+        .await
+        .unwrap_or(0);
+
+        // Publish MentionReceived so the client can show a toast or update the inbox list (Phase 7).
+        state.user_notifs.publish(
+            uid,
+            NotifEvent::MentionReceived {
+                notification_id: String::new(), // notification_id not needed for badge; Phase 7 will wire it
+                card_id: card_id.clone(),
+                card_title: card_title.clone(),
+                board_id: board_id.clone(),
+                from_user_name: from_user_name.clone(),
+            },
+        );
+
+        // Publish UnreadCountUpdated so the sidebar badge increments live.
+        state.user_notifs.publish(
+            uid,
+            NotifEvent::UnreadCountUpdated { count },
+        );
+    }
 
     Ok(entry)
 }
