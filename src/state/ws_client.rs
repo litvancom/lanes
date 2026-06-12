@@ -621,7 +621,7 @@ async fn refresh_board(board_id: String, signals: BoardSignals) {
 
             // Update existing signals and insert new ones.
             for card in &data.cards {
-                let existing = signals.card_signals.with(|cs| cs.get(&card.id).copied());
+                let existing = signals.card_signals.with_untracked(|cs| cs.get(&card.id).copied());
                 if let Some(sig) = existing {
                     // Update in place — keeps the DOM node alive.
                     let card_clone = card.clone();
@@ -636,7 +636,7 @@ async fn refresh_board(board_id: String, signals: BoardSignals) {
             }
 
             // Remove signals for cards no longer in the fresh data.
-            let stale_ids: Vec<String> = signals.card_signals.with(|cs| {
+            let stale_ids: Vec<String> = signals.card_signals.with_untracked(|cs| {
                 cs.keys()
                     .filter(|id| !fresh_card_ids.contains(*id))
                     .cloned()
@@ -735,7 +735,7 @@ pub fn apply_board_event(signals: BoardSignals, event: BoardEvent, own_client_id
 
             // Patch the card's RwSignal<Card> (list_id + position) in place —
             // never replace the whole card_signals map (would tear down all DOM nodes).
-            let card_sig = signals.card_signals.with(|cs| cs.get(&card_id).copied());
+            let card_sig = signals.card_signals.with_untracked(|cs| cs.get(&card_id).copied());
             let prev_list_id = if let Some(sig) = card_sig {
                 let prev = sig.with_untracked(|c| c.list_id.clone());
                 sig.update(|c| {
@@ -759,7 +759,7 @@ pub fn apply_board_event(signals: BoardSignals, event: BoardEvent, own_client_id
                     if !target_ids.contains(&card_id) {
                         // Find insert position by comparing position strings
                         let insert_at = target_ids.iter().position(|other_id| {
-                            signals.card_signals.with(|cs| {
+                            signals.card_signals.with_untracked(|cs| {
                                 cs.get(other_id)
                                     .map(|sig| sig.with_untracked(|c| c.position > position))
                                     .unwrap_or(false)
@@ -873,7 +873,7 @@ pub fn apply_board_event(signals: BoardSignals, event: BoardEvent, own_client_id
 
             // Apply only the Some fields from the patch.
             // Task 3 will gate title/description on focus signals; for now apply all.
-            let card_sig = signals.card_signals.with(|cs| cs.get(&card_id).copied());
+            let card_sig = signals.card_signals.with_untracked(|cs| cs.get(&card_id).copied());
             if let Some(sig) = card_sig {
                 sig.update(|c| {
                     if let Some(t) = patch.title { c.title = t; }
@@ -947,7 +947,7 @@ pub fn apply_board_event(signals: BoardSignals, event: BoardEvent, own_client_id
         BoardEvent::CommentAdded { board_seq, client_id, card_id, .. } => {
             signals.last_seen_seq.set(board_seq);
             // Increment comment_count on the card thumbnail
-            let card_sig = signals.card_signals.with(|cs| cs.get(&card_id).copied());
+            let card_sig = signals.card_signals.with_untracked(|cs| cs.get(&card_id).copied());
             if let Some(sig) = card_sig {
                 sig.update(|c| c.comment_count += 1);
             }
@@ -970,7 +970,7 @@ pub fn apply_board_event(signals: BoardSignals, event: BoardEvent, own_client_id
 
         BoardEvent::ChecklistUpdated { board_seq, client_id: _, card_id, checklist_done, checklist_total } => {
             signals.last_seen_seq.set(board_seq);
-            let card_sig = signals.card_signals.with(|cs| cs.get(&card_id).copied());
+            let card_sig = signals.card_signals.with_untracked(|cs| cs.get(&card_id).copied());
             if let Some(sig) = card_sig {
                 sig.update(|c| {
                     c.checklist_done = checklist_done;
@@ -981,7 +981,7 @@ pub fn apply_board_event(signals: BoardSignals, event: BoardEvent, own_client_id
 
         BoardEvent::LabelChanged { board_seq, client_id: _, card_id, labels } => {
             signals.last_seen_seq.set(board_seq);
-            let card_sig = signals.card_signals.with(|cs| cs.get(&card_id).copied());
+            let card_sig = signals.card_signals.with_untracked(|cs| cs.get(&card_id).copied());
             if let Some(sig) = card_sig {
                 sig.update(|c| c.labels = labels);
             }
@@ -989,7 +989,7 @@ pub fn apply_board_event(signals: BoardSignals, event: BoardEvent, own_client_id
 
         BoardEvent::PriorityChanged { board_seq, client_id: _, card_id, priority } => {
             signals.last_seen_seq.set(board_seq);
-            let card_sig = signals.card_signals.with(|cs| cs.get(&card_id).copied());
+            let card_sig = signals.card_signals.with_untracked(|cs| cs.get(&card_id).copied());
             if let Some(sig) = card_sig {
                 sig.update(|c| c.priority = priority);
             }
@@ -997,7 +997,7 @@ pub fn apply_board_event(signals: BoardSignals, event: BoardEvent, own_client_id
 
         BoardEvent::DueDateChanged { board_seq, client_id: _, card_id, due_at } => {
             signals.last_seen_seq.set(board_seq);
-            let card_sig = signals.card_signals.with(|cs| cs.get(&card_id).copied());
+            let card_sig = signals.card_signals.with_untracked(|cs| cs.get(&card_id).copied());
             if let Some(sig) = card_sig {
                 sig.update(|c| c.due_at = due_at);
             }
@@ -1005,7 +1005,7 @@ pub fn apply_board_event(signals: BoardSignals, event: BoardEvent, own_client_id
 
         BoardEvent::MemberChanged { board_seq, client_id: _, card_id, member_ids } => {
             signals.last_seen_seq.set(board_seq);
-            let card_sig = signals.card_signals.with(|cs| cs.get(&card_id).copied());
+            let card_sig = signals.card_signals.with_untracked(|cs| cs.get(&card_id).copied());
             if let Some(sig) = card_sig {
                 sig.update(|c| c.member_ids = member_ids);
             }
@@ -1013,7 +1013,7 @@ pub fn apply_board_event(signals: BoardSignals, event: BoardEvent, own_client_id
 
         BoardEvent::AttachmentAdded { board_seq, client_id: _, card_id, .. } => {
             signals.last_seen_seq.set(board_seq);
-            let card_sig = signals.card_signals.with(|cs| cs.get(&card_id).copied());
+            let card_sig = signals.card_signals.with_untracked(|cs| cs.get(&card_id).copied());
             if let Some(sig) = card_sig {
                 sig.update(|c| c.attachment_count += 1);
             }
@@ -1021,7 +1021,7 @@ pub fn apply_board_event(signals: BoardSignals, event: BoardEvent, own_client_id
 
         BoardEvent::AttachmentRemoved { board_seq, client_id: _, card_id, .. } => {
             signals.last_seen_seq.set(board_seq);
-            let card_sig = signals.card_signals.with(|cs| cs.get(&card_id).copied());
+            let card_sig = signals.card_signals.with_untracked(|cs| cs.get(&card_id).copied());
             if let Some(sig) = card_sig {
                 sig.update(|c| c.attachment_count = (c.attachment_count - 1).max(0));
             }
