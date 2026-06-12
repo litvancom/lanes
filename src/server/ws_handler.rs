@@ -238,6 +238,84 @@ async fn handle_ws(mut socket: WebSocket, board_id: String, user: AuthUser, stat
     );
 }
 
+// ---------------------------------------------------------------------------
+// Per-user notification WebSocket handler (RT-04 / 06-06)
+// ---------------------------------------------------------------------------
+
+/// GET /ws/notifications
+///
+/// Upgrades to a WebSocket after verifying authentication via session cookie.
+/// Returns 401 if the user is not authenticated (T-06-SC-01: auth before upgrade).
+/// Subscribes ONLY the per-user notification channel — no board or presence channels.
+/// Isolation is structural: the channel key is `user.id` from the validated session;
+/// the client supplies no user_id.
+#[cfg(feature = "ssr")]
+pub async fn ws_notifications_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> impl IntoResponse {
+    // Authenticate BEFORE upgrade (T-06-SC-01).
+    let user = match auth_session.user {
+        Some(u) => u,
+        None => return StatusCode::UNAUTHORIZED.into_response(),
+    };
+
+    ws.on_upgrade(move |socket| handle_notif_ws(socket, user, state))
+}
+
+/// Per-user notification WebSocket session.
+///
+/// Two-arm `tokio::select!` loop:
+///   1. socket.recv() — on Close/None/Err: break (no client→server protocol beyond Close)
+///   2. user_rx.recv() — relay NotifEvent as WsEnvelope::User; break on send error or None
+///
+/// On loop exit: channel-scoped cleanup via remove_if_current (CR-01 under fan-out,
+/// T-06-SC-04).  Inbound Text/Binary frames are ignored — the notification socket has
+/// no client→server protocol (T-06-SC-05).
+#[cfg(feature = "ssr")]
+async fn handle_notif_ws(mut socket: WebSocket, user: AuthUser, state: AppState) {
+    // Subscribe to the per-user notification channel only (T-06-SC-02: isolation).
+    let (channel_id, _my_tx, mut user_rx) = state.user_notifs.subscribe(&user.id);
+
+    loop {
+        tokio::select! {
+            // Client → Server: only Close ends the loop; all other frames are ignored
+            // (T-06-SC-05: no client→server protocol on this socket).
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                    // Ping/Pong handled automatically by Axum; Text/Binary ignored.
+                    _ => {}
+                }
+            }
+
+            // Server → Client: relay NotifEvent as WsEnvelope::User
+            notif = user_rx.recv() => {
+                match notif {
+                    Some(ev) => {
+                        if let Ok(json) = serde_json::to_string(&WsEnvelope::User { payload: ev }) {
+                            if socket.send(Message::Text(json.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    // All senders dropped (server shutting down) — clean exit.
+                    None => break,
+                }
+            }
+        }
+    }
+
+    // Channel-scoped cleanup (Pitfall 1 / CR-01 / T-06-SC-03/04).
+    state.user_notifs.remove_if_current(&user.id, &channel_id);
+
+    tracing::debug!(
+        user_id = %user.id,
+        "ws_notifications_handler: connection closed — cleanup complete"
+    );
+}
+
 /// Process a client→server message from inside the relay loop.
 ///
 /// Client messages are small JSON objects with a `"type"` field:

@@ -92,7 +92,7 @@ async fn start_server() {
     use lanes::server::board_rooms::BoardRoomRegistry;
     use lanes::server::user_notif_registry::UserNotifRegistry;
     use lanes::server::presence_registry::PresenceRegistry;
-    use lanes::server::ws_handler::ws_board_handler;
+    use lanes::server::ws_handler::{ws_board_handler, ws_notifications_handler};
     use axum::Router;
     use leptos::config::get_configuration;
     use leptos_axum::{generate_route_list, LeptosRoutes};
@@ -209,6 +209,9 @@ async fn start_server() {
         // WebSocket route for realtime board sync (RT-01, T-6-01).
         // Axum 0.8 path syntax uses {param} (not :param).
         .route("/ws/board/{id}", axum::routing::get(ws_board_handler))
+        // Per-user notification WebSocket (RT-04 / 06-06).
+        // Auth via session cookie before upgrade; no board membership check required.
+        .route("/ws/notifications", axum::routing::get(ws_notifications_handler))
         .leptos_routes(&app_state, routes, {
             let leptos_options = leptos_options.clone();
             move || {
