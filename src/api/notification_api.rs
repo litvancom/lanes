@@ -3,6 +3,7 @@
 //! `get_unread_count` seeds the sidebar inbox badge on initial load.
 //! Live updates arrive over the per-user WS channel (NotifEvent::UnreadCountUpdated).
 //! `insert_notification_inner` is the shared INSERT used by all notification generators.
+//! `notify_watchers_inner` fires watch_activity notifications for all watchers except the actor.
 
 use leptos::prelude::*;
 
@@ -78,7 +79,8 @@ pub async fn insert_notification_inner(
 /// D-07: self-suppressed — actor_id is excluded from watcher recipients.
 /// Returns list of user_ids that received a notification row.
 ///
-/// This is a stub — replaced with the real implementation in Task 3.
+/// Security (T-07-02): actor_id is the authenticated caller from the server fn, never client.
+/// Security (T-07-03): `user_id != actor_id` guard ensures actor self-suppression.
 #[cfg(feature = "ssr")]
 pub async fn notify_watchers_inner(
     pool: &sqlx::SqlitePool,
@@ -86,5 +88,22 @@ pub async fn notify_watchers_inner(
     board_id: &str,
     actor_id: &str,
 ) -> Result<Vec<String>, sqlx::Error> {
-    todo!("notify_watchers_inner — implemented in Task 3 (07-01)")
+    // SELECT watchers for this card excluding the actor (D-07 self-suppression)
+    let watcher_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT user_id FROM watchers WHERE card_id = ? AND user_id != ?",
+    )
+    .bind(card_id)
+    .bind(actor_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut notified: Vec<String> = Vec::new();
+
+    for uid in watcher_ids {
+        insert_notification_inner(pool, &uid, board_id, Some(card_id), "watch_activity", Some(actor_id))
+            .await?;
+        notified.push(uid);
+    }
+
+    Ok(notified)
 }

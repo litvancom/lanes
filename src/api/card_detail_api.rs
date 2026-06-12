@@ -913,9 +913,10 @@ pub async fn assign_member(
 ) -> Result<(), ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
-    use crate::models::events::BoardEvent;
+    use crate::models::events::{BoardEvent, NotifEvent};
+    use crate::api::notification_api::insert_notification_inner;
     let state = expect_context::<AppState>();
-    require_board_member(&board_id, &state.read_pool.0).await?;
+    let (actor, _role) = require_board_member(&board_id, &state.read_pool.0).await?;
     assign_member_inner(&state.write_pool.0, &board_id, &card_id, &user_id)
         .await
         .map_err(|e| {
@@ -934,8 +935,35 @@ pub async fn assign_member(
 
     // CR-04: publish_seq allocates seq and sends atomically.
     state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::MemberChanged {
-        board_seq: seq, client_id, card_id, member_ids,
+        board_seq: seq, client_id, card_id: card_id.clone(), member_ids,
     });
+
+    // D-04: assigned notification — only when assigning a DIFFERENT user (D-07 self-suppress).
+    if user_id != actor.id {
+        if let Err(e) = insert_notification_inner(
+            &state.write_pool.0,
+            &user_id,
+            &board_id,
+            Some(&card_id),
+            "assigned",
+            Some(&actor.id),
+        )
+        .await
+        {
+            tracing::error!("assign_member: assigned notification error: {e}");
+            // Non-fatal — notification failure must not break the member assignment
+        } else {
+            // Publish live badge update to the assigned user (T-6-22)
+            let count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND read = 0",
+            )
+            .bind(&user_id)
+            .fetch_one(&state.read_pool.0)
+            .await
+            .unwrap_or(0);
+            state.user_notifs.publish(&user_id, NotifEvent::UnreadCountUpdated { count });
+        }
+    }
 
     Ok(())
 }
@@ -951,9 +979,9 @@ pub async fn remove_member(
 ) -> Result<(), ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
-    use crate::models::events::BoardEvent;
+    use crate::models::events::{BoardEvent, NotifEvent};
     let state = expect_context::<AppState>();
-    require_board_member(&board_id, &state.read_pool.0).await?;
+    let (actor, _role) = require_board_member(&board_id, &state.read_pool.0).await?;
     remove_member_inner(&state.write_pool.0, &board_id, &card_id, &user_id)
         .await
         .map_err(|e| {
@@ -972,8 +1000,28 @@ pub async fn remove_member(
 
     // CR-04: publish_seq allocates seq and sends atomically.
     state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::MemberChanged {
-        board_seq: seq, client_id, card_id, member_ids,
+        board_seq: seq, client_id, card_id: card_id.clone(), member_ids,
     });
+
+    // D-03: watch_activity notification for watchers on member removal (self-suppressed D-07).
+    {
+        use crate::api::notification_api::notify_watchers_inner;
+        match notify_watchers_inner(&state.write_pool.0, &card_id, &board_id, &actor.id).await {
+            Ok(notified_ids) => {
+                for uid in notified_ids {
+                    let count: i64 = sqlx::query_scalar(
+                        "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND read = 0",
+                    )
+                    .bind(&uid)
+                    .fetch_one(&state.read_pool.0)
+                    .await
+                    .unwrap_or(0);
+                    state.user_notifs.publish(&uid, NotifEvent::UnreadCountUpdated { count });
+                }
+            }
+            Err(e) => tracing::error!("remove_member watch_activity error: {e}"),
+        }
+    }
 
     Ok(())
 }
@@ -1422,6 +1470,26 @@ pub async fn add_comment(
         );
     }
 
+    // D-03: watch_activity notification for watchers on new comment (self-suppressed D-07).
+    {
+        use crate::api::notification_api::notify_watchers_inner;
+        match notify_watchers_inner(&state.write_pool.0, &card_id, &board_id, &user.id).await {
+            Ok(notified_ids) => {
+                for uid in notified_ids {
+                    let count: i64 = sqlx::query_scalar(
+                        "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND read = 0",
+                    )
+                    .bind(&uid)
+                    .fetch_one(&state.read_pool.0)
+                    .await
+                    .unwrap_or(0);
+                    state.user_notifs.publish(&uid, NotifEvent::UnreadCountUpdated { count });
+                }
+            }
+            Err(e) => tracing::error!("add_comment watch_activity error: {e}"),
+        }
+    }
+
     Ok(entry)
 }
 
@@ -1743,9 +1811,9 @@ pub async fn archive_card(
 ) -> Result<(), ServerFnError> {
     use crate::auth::helpers::require_board_member;
     use crate::server::state::AppState;
-    use crate::models::events::BoardEvent;
+    use crate::models::events::{BoardEvent, NotifEvent};
     let state = expect_context::<AppState>();
-    require_board_member(&board_id, &state.read_pool.0).await?;
+    let (actor, _role) = require_board_member(&board_id, &state.read_pool.0).await?;
     archive_card_inner(&state.write_pool.0, &board_id, &card_id)
         .await
         .map_err(|e| {
@@ -1756,8 +1824,28 @@ pub async fn archive_card(
     // Publish CardArchived after successful DB write (T-6-07).
     // CR-04: publish_seq allocates seq and sends atomically.
     state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::CardArchived {
-        board_seq: seq, client_id, card_id,
+        board_seq: seq, client_id, card_id: card_id.clone(),
     });
+
+    // D-03: watch_activity notification for watchers on card archive (self-suppressed D-07).
+    {
+        use crate::api::notification_api::notify_watchers_inner;
+        match notify_watchers_inner(&state.write_pool.0, &card_id, &board_id, &actor.id).await {
+            Ok(notified_ids) => {
+                for uid in notified_ids {
+                    let count: i64 = sqlx::query_scalar(
+                        "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND read = 0",
+                    )
+                    .bind(&uid)
+                    .fetch_one(&state.read_pool.0)
+                    .await
+                    .unwrap_or(0);
+                    state.user_notifs.publish(&uid, NotifEvent::UnreadCountUpdated { count });
+                }
+            }
+            Err(e) => tracing::error!("archive_card watch_activity error: {e}"),
+        }
+    }
 
     Ok(())
 }

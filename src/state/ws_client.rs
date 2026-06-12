@@ -1133,8 +1133,11 @@ async fn notif_reconnect_loop(
 
         // Re-seed the count on every connect — the notification socket has no seq-gap
         // recovery, so fetching the current count covers any events missed while offline.
-        if let Ok(count) = get_unread_count().await {
-            unread_count.set(count);
+        // WR-02: on Err keep the prior signal value (do not zero) — transient network
+        // failures during reconnect must not reset the badge to 0.
+        match get_unread_count().await {
+            Ok(count) => unread_count.set(count),
+            Err(e) => console_log(&format!("[notif-ws] re-seed failed: {e:?}")),
         }
 
         let url = notif_ws_url();

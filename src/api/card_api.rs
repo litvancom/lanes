@@ -287,7 +287,7 @@ pub async fn move_card(
     let state = expect_context::<AppState>();
 
     // Auth + membership gate first (T-04-08)
-    require_board_member(&board_id, &state.read_pool.0).await?;
+    let (actor, _role) = require_board_member(&board_id, &state.read_pool.0).await?;
 
     // Re-validate position (T-04-09: mirrors reorder_list wrapper lines 237-242)
     {
@@ -310,10 +310,32 @@ pub async fn move_card(
     state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::CardMoved {
         board_seq: seq,
         client_id,
-        card_id,
+        card_id: card_id.clone(),
         to_list_id,
         position: new_position,
     });
+
+    // D-03: watch_activity notification for watchers on card move (self-suppressed D-07).
+    {
+        use crate::api::notification_api::notify_watchers_inner;
+        use crate::models::events::NotifEvent;
+
+        match notify_watchers_inner(&state.write_pool.0, &card_id, &board_id, &actor.id).await {
+            Ok(notified_ids) => {
+                for uid in notified_ids {
+                    let count: i64 = sqlx::query_scalar(
+                        "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND read = 0",
+                    )
+                    .bind(&uid)
+                    .fetch_one(&state.read_pool.0)
+                    .await
+                    .unwrap_or(0);
+                    state.user_notifs.publish(&uid, NotifEvent::UnreadCountUpdated { count });
+                }
+            }
+            Err(e) => tracing::error!("move_card watch_activity error: {e}"),
+        }
+    }
 
     Ok(())
 }
