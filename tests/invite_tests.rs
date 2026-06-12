@@ -104,7 +104,7 @@ mod invite_tests {
             .unwrap()
             .as_millis() as i64;
 
-        let token = create_invite(&write_pool, &board_id, &user_id, "Invitee@Test.com", now)
+        let token = create_invite(&write_pool, &board_id, &user_id, "Invitee@Test.com", "editor", now)
             .await
             .expect("create_invite should succeed");
 
@@ -143,11 +143,11 @@ mod invite_tests {
             .unwrap()
             .as_millis() as i64;
 
-        let token1 = create_invite(&write_pool, &board_id, &user_id, "friend@test.com", now)
+        let token1 = create_invite(&write_pool, &board_id, &user_id, "friend@test.com", "editor", now)
             .await
             .expect("first invite");
 
-        let token2 = create_invite(&write_pool, &board_id, &user_id, "friend@test.com", now + 1000)
+        let token2 = create_invite(&write_pool, &board_id, &user_id, "friend@test.com", "editor", now + 1000)
             .await
             .expect("second invite");
 
@@ -191,7 +191,7 @@ mod invite_tests {
         let invitee_id = insert_invitee(&write_pool, "alice@test.com").await;
 
         let now = now_ms();
-        let token = create_invite(&write_pool, &board_id, &owner_id, "Alice@Test.com", now)
+        let token = create_invite(&write_pool, &board_id, &owner_id, "Alice@Test.com", "editor", now)
             .await
             .expect("create_invite");
 
@@ -233,7 +233,7 @@ mod invite_tests {
         let attacker_id = insert_invitee(&write_pool, "attacker@test.com").await;
 
         let now = now_ms();
-        let token = create_invite(&write_pool, &board_id, &owner_id, "alice@test.com", now)
+        let token = create_invite(&write_pool, &board_id, &owner_id, "alice@test.com", "editor", now)
             .await
             .expect("create_invite");
 
@@ -274,7 +274,7 @@ mod invite_tests {
 
         // Create invite in the past (already expired)
         let past = now_ms() - 10 * 24 * 3600 * 1000; // 10 days ago
-        let token = create_invite(&write_pool, &board_id, &owner_id, "bob@test.com", past)
+        let token = create_invite(&write_pool, &board_id, &owner_id, "bob@test.com", "editor", past)
             .await
             .expect("create_invite");
 
@@ -310,7 +310,7 @@ mod invite_tests {
         let invitee_id = insert_invitee(&write_pool, "diana@test.com").await;
 
         let now = now_ms();
-        let token = create_invite(&write_pool, &board_id, &owner_id, "diana@test.com", now)
+        let token = create_invite(&write_pool, &board_id, &owner_id, "diana@test.com", "editor", now)
             .await
             .expect("create_invite");
 
@@ -349,7 +349,7 @@ mod invite_tests {
         let invitee_id = insert_invitee(&write_pool, "carol@test.com").await;
 
         let now = now_ms();
-        let token = create_invite(&write_pool, &board_id, &owner_id, "carol@test.com", now)
+        let token = create_invite(&write_pool, &board_id, &owner_id, "carol@test.com", "editor", now)
             .await
             .expect("create_invite");
 
@@ -373,5 +373,31 @@ mod invite_tests {
         .await
         .expect("member count");
         assert_eq!(member_count, 1, "must not duplicate board_members on double-accept");
+    }
+
+    /// Test: invite with a specific role grants exactly that role to the accepted member.
+    #[tokio::test]
+    async fn invite_with_role_grants_that_role_on_accept() {
+        let (_f, write_pool, read_pool) = test_db().await;
+        let owner = insert_user_direct(&write_pool, "owner@x.com").await;
+        let board = insert_board_with_owner(&write_pool, "B", &owner).await;
+        let invitee = insert_user_direct(&write_pool, "viewer@x.com").await;
+        let now: i64 = 1_700_000_000_000;
+        let token = create_invite(&write_pool, &board, &owner, "viewer@x.com", "viewer", now)
+            .await
+            .unwrap();
+        let bid = consume_invite(&write_pool, &token, &invitee, "viewer@x.com", now + 1000)
+            .await
+            .unwrap();
+        assert_eq!(bid, board);
+        let role: String = sqlx::query_scalar(
+            "SELECT role FROM board_members WHERE board_id = ? AND user_id = ?"
+        )
+        .bind(&board)
+        .bind(&invitee)
+        .fetch_one(&read_pool)
+        .await
+        .unwrap();
+        assert_eq!(role, "viewer");
     }
 }
