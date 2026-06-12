@@ -51,6 +51,27 @@ js-sys = { version = "0.3", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 # futures: oneshot channel used in WASM WS reconnect loop to bridge close callback to async.
 futures = { version = "0.3", default-features = false, features = ["std"], optional = true }
+# web-sys: browser WebSocket + DOM APIs used by the realtime WS client (hydrate only).
+web-sys = { version = "0.3", optional = true, features = [
+    "WebSocket",
+    "MessageEvent",
+    "CloseEvent",
+    "ErrorEvent",
+    "Event",
+    "EventTarget",
+    "Element",
+    "HtmlElement",
+    "HtmlInputElement",
+    "FormData",
+    "Request",
+    "RequestInit",
+    "Response",
+    "Window",
+    "Document",
+    "VisibilityState",
+] }
+# gloo-timers: async sleep via TimeoutFuture used in the WS reconnect/heartbeat loops.
+gloo-timers = { version = "0.3", optional = true, features = ["futures"] }
 
 [features]
 default = []
@@ -63,6 +84,8 @@ hydrate = [
     "dep:futures",
     "dep:fractional_index",
     "dep:serde_json",
+    "dep:web-sys",
+    "dep:gloo-timers",
 ]
 ssr = [
     "leptos-use/ssr",
