@@ -444,12 +444,6 @@ fn DayCell(
         }
     };
 
-    let visible_cards = if cards.len() > 3 && !expanded.get_untracked() {
-        cards[..3].to_vec()
-    } else {
-        cards.clone()
-    };
-
     view! {
         <div class=cell_class>
             <div class="lns-calendar-day-num">{day}</div>
