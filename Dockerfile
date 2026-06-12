@@ -34,11 +34,19 @@ RUN wget -q https://github.com/cargo-bins/cargo-binstall/releases/latest/downloa
 # Install cargo-leptos (0.3.6 — compatible with Leptos 0.8, CLAUDE.md)
 RUN cargo binstall cargo-leptos --version 0.3.6 -y
 
-# WASM compilation target
-RUN rustup target add wasm32-unknown-unknown
-
 WORKDIR /app
 COPY . .
+
+# WASM compilation target — added AFTER `COPY . .` so rust-toolchain.toml
+# (channel = "stable") is in scope; the target must be installed for the toolchain
+# the build actually selects, not the image's default nightly (otherwise the wasm
+# build fails with E0463 "can't find crate for core").
+RUN rustup target add wasm32-unknown-unknown
+
+# SQLx compile-time query verification uses the committed .sqlx/ offline cache —
+# there is no DATABASE_URL at build time. Regenerate via `cargo sqlx prepare`
+# whenever query! macros change, and commit the .sqlx/ directory.
+ENV SQLX_OFFLINE=true
 
 # Build release: binary → target/release/lanes; site assets → target/site/
 RUN cargo leptos build --release -vv

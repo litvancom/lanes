@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT c.id as \"id!\",\n                  c.title as \"title!\",\n                  c.card_num as \"card_num!\",\n                  c.due_at,\n                  CAST(c.done AS BOOLEAN) as \"done!: bool\",\n                  c.board_id as \"board_id!\",\n                  b.name as \"board_name!\",\n                  b.color as \"board_color!\"\n           FROM cards c\n           JOIN boards b ON c.board_id = b.id\n           JOIN board_members bm ON bm.board_id = c.board_id\n           WHERE bm.user_id = ? AND c.archived = 0\n             AND c.due_at >= ? AND c.due_at <= ?\n           ORDER BY c.due_at ASC",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "title!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "card_num!",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "due_at",
+        "ordinal": 3,
+        "type_info": "Integer"
+      },
+      {
+        "name": "done!: bool",
+        "ordinal": 4,
+        "type_info": "Null"
+      },
+      {
+        "name": "board_id!",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "board_name!",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "board_color!",
+        "ordinal": 7,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      null,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "9d2a0e9fb791c7e1e663dc482df4c8531768fbec426567f779cf7c754c7c3518"
+}
