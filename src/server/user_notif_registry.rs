@@ -6,8 +6,10 @@
 //!
 //! Using `mpsc::unbounded` rather than broadcast: a user has at most one WS connection in v1.
 //! The Sender lives in the registry; the Receiver lives in the WS handler task.
-//! When two tabs open: the second subscribe() overwrites the first Sender (first tab loses
-//! notifications). This is consistent with D-12 (tab-visible = present).
+//! When two tabs open: the second subscribe() overwrites the first Sender (the latest tab
+//! receives notifications). Teardown must only remove the entry belonging to this connection
+//! — use `remove_if_current` rather than `remove` to avoid the first-tab-to-close wiping the
+//! surviving second-tab's sender (CR-01).
 
 #[cfg(feature = "ssr")]
 use dashmap::DashMap;
@@ -35,11 +37,12 @@ impl UserNotifRegistry {
     /// Register a notification channel for the given user.
     ///
     /// Overwrites any existing entry (multi-tab: only the latest tab receives notifications).
-    /// Returns the Receiver end — the caller (WS handler) owns it for the lifetime of the task.
-    pub fn subscribe(&self, user_id: &str) -> mpsc::UnboundedReceiver<NotifEvent> {
+    /// Returns both the Sender (for connection-scoped teardown via `remove_if_current`) and
+    /// the Receiver end (owned by the WS handler task for the lifetime of the connection).
+    pub fn subscribe(&self, user_id: &str) -> (mpsc::UnboundedSender<NotifEvent>, mpsc::UnboundedReceiver<NotifEvent>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        self.0.insert(user_id.to_string(), tx);
-        rx
+        self.0.insert(user_id.to_string(), tx.clone());
+        (tx, rx)
     }
 
     /// Deliver a notification to a connected user.
@@ -51,11 +54,12 @@ impl UserNotifRegistry {
         }
     }
 
-    /// Remove the channel for a user (called on WS handler exit — Pitfall 1 cleanup).
+    /// Remove the channel for a user only if the currently-stored sender is the one this
+    /// connection installed (connection-scoped teardown — CR-01).
     ///
-    /// Without this, the Sender stays in the map; future publishes succeed on a dead channel
-    /// and the Receiver is leaked in the (already-returned) WS task.
-    pub fn remove(&self, user_id: &str) {
-        self.0.remove(user_id);
+    /// If a second tab has already overwritten the entry with its own sender, this is a no-op
+    /// so the second tab's notifications are preserved.
+    pub fn remove_if_current(&self, user_id: &str, my_tx: &mpsc::UnboundedSender<NotifEvent>) {
+        self.0.remove_if(user_id, |_, cur| cur.same_channel(my_tx));
     }
 }

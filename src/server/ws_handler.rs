@@ -94,8 +94,11 @@ async fn handle_ws(mut socket: WebSocket, board_id: String, user: AuthUser, stat
     // Subscribe to all three channels BEFORE sending the snapshot (Pitfall 3):
     // subscribing first ensures we don't miss any events emitted between
     // snapshot build and the subscribe call.
+    //
+    // CR-01: capture my_notif_tx so teardown only removes this connection's sender
+    // (not a newer tab's sender that may have overwritten it in the registry).
     let mut board_rx = state.board_rooms.subscribe(&board_id);
-    let mut user_rx = state.user_notifs.subscribe(&user.id);
+    let (my_notif_tx, mut user_rx) = state.user_notifs.subscribe(&user.id);
     let mut pres_rx = state.presence.subscribe(&board_id);
 
     // --- Initial Connected handshake ---
@@ -110,7 +113,7 @@ async fn handle_ws(mut socket: WebSocket, board_id: String, user: AuthUser, stat
         Ok(j) => j,
         Err(e) => {
             tracing::error!("ws handshake serialize error: {e}");
-            state.user_notifs.remove(&user.id);
+            state.user_notifs.remove_if_current(&user.id, &my_notif_tx);
             return;
         }
     };
@@ -120,7 +123,7 @@ async fn handle_ws(mut socket: WebSocket, board_id: String, user: AuthUser, stat
         .is_err()
     {
         // Client disconnected immediately after upgrade (rare but valid)
-        state.user_notifs.remove(&user.id);
+        state.user_notifs.remove_if_current(&user.id, &my_notif_tx);
         state.presence.leave(&board_id, &user.id);
         return;
     }
@@ -218,7 +221,8 @@ async fn handle_ws(mut socket: WebSocket, board_id: String, user: AuthUser, stat
     // --- Explicit cleanup (Pitfall 1: prevent Sender leak in registries) ---
     // board_rx and pres_rx are dropped automatically by going out of scope.
     // user_rx is also dropped, but we must remove the dead Sender from the registry.
-    state.user_notifs.remove(&user.id);
+    // CR-01: use remove_if_current so a newer tab's sender is not wiped.
+    state.user_notifs.remove_if_current(&user.id, &my_notif_tx);
     // presence.leave broadcasts ViewerLeft to remaining viewers and removes from viewers map.
     state.presence.leave(&board_id, &user.id);
 
