@@ -137,6 +137,178 @@ mod tests {
 }
 
 // ---------------------------------------------------------------------------
+// Wave-0 mark-read tests (INBOX-02 / 07-02)
+// ---------------------------------------------------------------------------
+
+#[cfg(all(test, feature = "ssr"))]
+mod mark_read_tests {
+    use lanes::server::db::run_migrations;
+    use lanes::api::notification_api::{
+        insert_notification_inner, mark_notification_read_inner, mark_all_notifications_read_inner,
+    };
+    use tempfile::NamedTempFile;
+    use uuid::Uuid;
+
+    async fn test_db() -> (NamedTempFile, sqlx::SqlitePool) {
+        let file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_str().expect("path").to_string();
+        let url = format!("sqlite://{}", path);
+        let write_pool = lanes::server::db::make_write_pool(&url)
+            .await
+            .expect("make_write_pool");
+        run_migrations(&write_pool).await.expect("migrations");
+        (file, write_pool)
+    }
+
+    async fn insert_user(pool: &sqlx::SqlitePool, email: &str) -> String {
+        let id = Uuid::now_v7().to_string();
+        let now: i64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        sqlx::query(
+            "INSERT INTO users (id, email, password_hash, display_name, avatar_color, auth_provider, created_at) \
+             VALUES (?, ?, 'x', ?, '#7c5cff', 'password', ?)",
+        )
+        .bind(&id)
+        .bind(email)
+        .bind(email)
+        .bind(now)
+        .execute(pool)
+        .await
+        .expect("insert user");
+        id
+    }
+
+    async fn insert_board(pool: &sqlx::SqlitePool, owner_id: &str) -> String {
+        let id = Uuid::now_v7().to_string();
+        let now: i64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        sqlx::query(
+            "INSERT INTO boards (id, name, key_prefix, color, next_card_num, starred, archived, created_at, updated_at) \
+             VALUES (?, 'board', 'TST', '#ff0', 1, 0, 0, ?, ?)",
+        )
+        .bind(&id)
+        .bind(now)
+        .bind(now)
+        .execute(pool)
+        .await
+        .expect("insert board");
+        sqlx::query(
+            "INSERT INTO board_members (board_id, user_id, role) VALUES (?, ?, 'owner')",
+        )
+        .bind(&id)
+        .bind(owner_id)
+        .execute(pool)
+        .await
+        .expect("insert board_member");
+        id
+    }
+
+    /// INBOX-02: mark_notification_read sets read=1 for the right row only.
+    #[tokio::test]
+    async fn mark_notification_read() {
+        let (_file, pool) = test_db().await;
+
+        let user_id = insert_user(&pool, "mark-read-test@example.com").await;
+        let board_id = insert_board(&pool, &user_id).await;
+
+        // Insert two notifications for this user
+        insert_notification_inner(&pool, &user_id, &board_id, None, "due_soon", None)
+            .await
+            .expect("insert notif 1");
+        insert_notification_inner(&pool, &user_id, &board_id, None, "overdue", None)
+            .await
+            .expect("insert notif 2");
+
+        // Retrieve the first notification's id
+        let first_id: String = sqlx::query_scalar(
+            "SELECT id FROM notifications WHERE user_id = ? AND kind = 'due_soon' LIMIT 1",
+        )
+        .bind(&user_id)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch first id");
+
+        // Mark only the first one read
+        mark_notification_read_inner(&pool, &first_id, &user_id)
+            .await
+            .expect("mark_notification_read_inner");
+
+        // First row should be read=1
+        let read_val: i64 = sqlx::query_scalar(
+            "SELECT read FROM notifications WHERE id = ?",
+        )
+        .bind(&first_id)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch read flag");
+        assert_eq!(read_val, 1, "target row should be read=1");
+
+        // The second row (overdue) should remain read=0
+        let unread_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND kind = 'overdue' AND read = 0",
+        )
+        .bind(&user_id)
+        .fetch_one(&pool)
+        .await
+        .expect("count unread overdue");
+        assert_eq!(unread_count, 1, "overdue row must remain unread");
+    }
+
+    /// INBOX-02 T-07-06: mark_all_read only affects the calling user's rows.
+    ///
+    /// Sets up user A and user B with notifications; calls mark_all for user A;
+    /// verifies user B's rows remain read=0.
+    #[tokio::test]
+    async fn mark_all_read_scope() {
+        let (_file, pool) = test_db().await;
+
+        let user_a = insert_user(&pool, "user-a@example.com").await;
+        let user_b = insert_user(&pool, "user-b@example.com").await;
+        let board_a = insert_board(&pool, &user_a).await;
+        let board_b = insert_board(&pool, &user_b).await;
+
+        // Give user A a notification
+        insert_notification_inner(&pool, &user_a, &board_a, None, "assigned", None)
+            .await
+            .expect("insert notif for user_a");
+
+        // Give user B a notification
+        insert_notification_inner(&pool, &user_b, &board_b, None, "assigned", None)
+            .await
+            .expect("insert notif for user_b");
+
+        // Mark all read for user A only
+        mark_all_notifications_read_inner(&pool, &user_a)
+            .await
+            .expect("mark_all_notifications_read_inner for user_a");
+
+        // User A's row should be read=1
+        let a_unread: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND read = 0",
+        )
+        .bind(&user_a)
+        .fetch_one(&pool)
+        .await
+        .expect("count user_a unread");
+        assert_eq!(a_unread, 0, "user A's notifications should all be read after mark_all");
+
+        // User B's row must remain untouched (read=0) — T-07-06 scope isolation
+        let b_unread: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND read = 0",
+        )
+        .bind(&user_b)
+        .fetch_one(&pool)
+        .await
+        .expect("count user_b unread");
+        assert_eq!(b_unread, 1, "user B's notifications must be unaffected by user A's mark_all");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Wave-0 RED tests for notification generators (INBOX-01 / 07-01)
 // ---------------------------------------------------------------------------
 //

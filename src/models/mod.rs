@@ -149,6 +149,32 @@ pub struct Attachment {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 7: Inbox DTOs
+// ---------------------------------------------------------------------------
+
+/// A single row in the inbox list (INBOX-01).
+///
+/// Returned by `list_notifications`.  All optional fields come from JOINs that
+/// may not match (deleted card, anonymous actor, etc.).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct NotificationRow {
+    pub id: String,
+    /// Notification kind: "mention" | "assigned" | "due_soon" | "overdue" | "watch_activity"
+    pub kind: String,
+    pub card_id: Option<String>,
+    pub card_title: Option<String>,
+    pub board_id: Option<String>,
+    pub board_name: Option<String>,
+    /// Per-board sequential card number (for deep-link `/board/{board_id}/card/{card_num}`).
+    pub card_num: Option<i64>,
+    pub actor_name: Option<String>,
+    pub actor_color: Option<String>,
+    pub read: bool,
+    /// Creation timestamp as epoch milliseconds (UTC).
+    pub created_at: i64,
+}
+
+// ---------------------------------------------------------------------------
 // Phase 5 gap-fix: Move popover target DTOs
 // ---------------------------------------------------------------------------
 
