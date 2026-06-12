@@ -13,7 +13,7 @@
 #   docker build -t lanes .             # standalone build
 
 # ── Builder stage ─────────────────────────────────────────────────────────────
-FROM rustlang/rust:nightly-20250601-trixie AS builder
+FROM rustlang/rust:nightly-trixie AS builder
 
 # System deps for cargo-leptos: clang (for ring/openssl), sass, binaryen (wasm-opt)
 RUN apt-get update -y \
