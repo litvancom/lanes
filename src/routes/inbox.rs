@@ -49,8 +49,15 @@ fn today_start_ms() -> i64 {
 }
 
 /// Bucket label for a notification row based on its `created_at` epoch millis.
+///
+/// "Earlier this week" is anchored to the current Monday (parity with the calendar's
+/// Monday-start week model / `leading_pad_days`), not a rolling 7-day window.
 fn bucket_for(created_at: i64, today_start: i64) -> &'static str {
-    let week_start = today_start - 6 * 86_400_000; // 7 days ago (Mon–Sun span ≈ 6 days before today)
+    // 1970-01-01 (epoch day 0) was a Thursday → index 3 counting Monday as 0.
+    // So num_days_from_monday = (days_since_epoch + 3) % 7.
+    let days_since_epoch = today_start / 86_400_000;
+    let num_days_from_monday = (days_since_epoch + 3).rem_euclid(7);
+    let week_start = today_start - num_days_from_monday * 86_400_000;
     if created_at >= today_start {
         "Today"
     } else if created_at >= week_start {
