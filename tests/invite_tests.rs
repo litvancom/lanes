@@ -400,4 +400,29 @@ mod invite_tests {
         .unwrap();
         assert_eq!(role, "viewer");
     }
+
+    #[tokio::test]
+    async fn owner_row_cannot_be_changed_or_removed() {
+        let (_f, write_pool, _r) = test_db().await;
+        let owner = insert_user_direct(&write_pool, "o@x.com").await;
+        let board = insert_board_with_owner(&write_pool, "B", &owner).await;
+        let upd = sqlx::query(
+            "UPDATE board_members SET role='viewer' WHERE board_id=? AND user_id=? AND role!='owner'",
+        )
+        .bind(&board)
+        .bind(&owner)
+        .execute(&write_pool)
+        .await
+        .unwrap();
+        assert_eq!(upd.rows_affected(), 0, "owner role must not be changeable");
+        let del = sqlx::query(
+            "DELETE FROM board_members WHERE board_id=? AND user_id=? AND role!='owner'",
+        )
+        .bind(&board)
+        .bind(&owner)
+        .execute(&write_pool)
+        .await
+        .unwrap();
+        assert_eq!(del.rows_affected(), 0, "owner must not be removable");
+    }
 }
