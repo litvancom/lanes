@@ -181,17 +181,14 @@ pub async fn create_list(board_id: String, name: String, client_id: String) -> R
     })?;
 
     // Publish ListAdded after successful DB write (T-6-07).
-    let seq = state.board_rooms.next_seq(&board_id);
-    state.board_rooms.publish(
-        &board_id,
-        BoardEvent::ListAdded {
-            board_seq: seq,
-            client_id,
-            list_id: list.id.clone(),
-            name: list.name.clone(),
-            position: list.position.clone(),
-        },
-    );
+    // CR-04: publish_seq allocates seq and sends atomically under the same entry guard.
+    state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::ListAdded {
+        board_seq: seq,
+        client_id,
+        list_id: list.id.clone(),
+        name: list.name.clone(),
+        position: list.position.clone(),
+    });
 
     Ok(list)
 }
@@ -233,16 +230,13 @@ pub async fn rename_list(list_id: String, name: String, client_id: String) -> Re
     })?;
 
     // Publish ListRenamed after successful DB write (T-6-07).
-    let seq = state.board_rooms.next_seq(&board_id);
-    state.board_rooms.publish(
-        &board_id,
-        BoardEvent::ListRenamed {
-            board_seq: seq,
-            client_id,
-            list_id,
-            name,
-        },
-    );
+    // CR-04: publish_seq allocates seq and sends atomically under the same entry guard.
+    state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::ListRenamed {
+        board_seq: seq,
+        client_id,
+        list_id,
+        name,
+    });
 
     Ok(())
 }
@@ -283,16 +277,13 @@ pub async fn reorder_list(list_id: String, new_position: String, client_id: Stri
     })?;
 
     // Publish ListReordered after successful DB write (T-6-07).
-    let seq = state.board_rooms.next_seq(&board_id);
-    state.board_rooms.publish(
-        &board_id,
-        BoardEvent::ListReordered {
-            board_seq: seq,
-            client_id,
-            list_id,
-            position: new_position,
-        },
-    );
+    // CR-04: publish_seq allocates seq and sends atomically under the same entry guard.
+    state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::ListReordered {
+        board_seq: seq,
+        client_id,
+        list_id,
+        position: new_position,
+    });
 
     Ok(())
 }

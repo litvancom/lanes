@@ -235,4 +235,35 @@ mod tests {
         // filled in by 06-03
         assert!(true);
     }
+
+    /// CR-04: publish_seq allocates seq and sends atomically — smoke test for sequential calls.
+    ///
+    /// Verifies that the counter increments by 1 each call and the event carries the
+    /// allocated seq, locking in the atomic pairing guarantee (CR-04).
+    #[tokio::test]
+    async fn test_publish_seq_order() {
+        let registry = BoardRoomRegistry::new();
+        let mut rx = registry.subscribe("board-seq-cr04");
+
+        for _ in 0..5 {
+            registry.publish_seq("board-seq-cr04", |seq| BoardEvent::CardMoved {
+                board_seq: seq,
+                client_id: "t1".to_string(),
+                card_id: "card-t1".to_string(),
+                to_list_id: "list-1".to_string(),
+                position: "a0".to_string(),
+            });
+        }
+
+        let mut last = 0u64;
+        for i in 1..=5u64 {
+            let ev = rx.recv().await.expect("expected event");
+            if let BoardEvent::CardMoved { board_seq, .. } = ev {
+                assert_eq!(board_seq, i, "expected seq {i}, got {board_seq}");
+                assert!(board_seq > last, "seq must be strictly increasing");
+                last = board_seq;
+            }
+        }
+        assert_eq!(last, 5);
+    }
 }

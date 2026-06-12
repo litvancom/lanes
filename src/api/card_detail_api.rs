@@ -539,17 +539,14 @@ pub async fn toggle_checklist_item(
         })?;
 
     // Publish ChecklistUpdated after successful DB write (T-6-07).
-    let seq = state.board_rooms.next_seq(&board_id);
-    state.board_rooms.publish(
-        &board_id,
-        BoardEvent::ChecklistUpdated {
-            board_seq: seq,
-            client_id,
-            card_id,
-            checklist_done: result.1,
-            checklist_total: result.2,
-        },
-    );
+    // CR-04: publish_seq allocates seq and sends atomically.
+    state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::ChecklistUpdated {
+        board_seq: seq,
+        client_id,
+        card_id,
+        checklist_done: result.1,
+        checklist_total: result.2,
+    });
 
     Ok(result)
 }
@@ -580,17 +577,14 @@ pub async fn add_checklist_item(
         })?;
 
     // Publish ChecklistUpdated after successful DB write (T-6-07).
-    let seq = state.board_rooms.next_seq(&board_id);
-    state.board_rooms.publish(
-        &board_id,
-        BoardEvent::ChecklistUpdated {
-            board_seq: seq,
-            client_id,
-            card_id,
-            checklist_done: result.1,
-            checklist_total: result.2,
-        },
-    );
+    // CR-04: publish_seq allocates seq and sends atomically.
+    state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::ChecklistUpdated {
+        board_seq: seq,
+        client_id,
+        card_id,
+        checklist_done: result.1,
+        checklist_total: result.2,
+    });
 
     Ok(result)
 }
@@ -840,11 +834,10 @@ pub async fn assign_label(
     .map(|(id, name, color): (String, String, String)| CardLabel { id, name, color })
     .collect();
 
-    let seq = state.board_rooms.next_seq(&board_id);
-    state.board_rooms.publish(
-        &board_id,
-        BoardEvent::LabelChanged { board_seq: seq, client_id, card_id, labels },
-    );
+    // CR-04: publish_seq allocates seq and sends atomically.
+    state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::LabelChanged {
+        board_seq: seq, client_id, card_id, labels,
+    });
 
     Ok(())
 }
@@ -871,11 +864,10 @@ pub async fn set_due_date(
         })?;
 
     // Publish DueDateChanged after successful DB write (T-6-07).
-    let seq = state.board_rooms.next_seq(&board_id);
-    state.board_rooms.publish(
-        &board_id,
-        BoardEvent::DueDateChanged { board_seq: seq, client_id, card_id, due_at },
-    );
+    // CR-04: publish_seq allocates seq and sends atomically.
+    state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::DueDateChanged {
+        board_seq: seq, client_id, card_id, due_at,
+    });
 
     Ok(())
 }
@@ -902,11 +894,10 @@ pub async fn set_priority(
         })?;
 
     // Publish PriorityChanged after successful DB write (T-6-07).
-    let seq = state.board_rooms.next_seq(&board_id);
-    state.board_rooms.publish(
-        &board_id,
-        BoardEvent::PriorityChanged { board_seq: seq, client_id, card_id, priority },
-    );
+    // CR-04: publish_seq allocates seq and sends atomically.
+    state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::PriorityChanged {
+        board_seq: seq, client_id, card_id, priority,
+    });
 
     Ok(())
 }
@@ -941,11 +932,10 @@ pub async fn assign_member(
     .await
     .unwrap_or_default();
 
-    let seq = state.board_rooms.next_seq(&board_id);
-    state.board_rooms.publish(
-        &board_id,
-        BoardEvent::MemberChanged { board_seq: seq, client_id, card_id, member_ids },
-    );
+    // CR-04: publish_seq allocates seq and sends atomically.
+    state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::MemberChanged {
+        board_seq: seq, client_id, card_id, member_ids,
+    });
 
     Ok(())
 }
@@ -980,11 +970,10 @@ pub async fn remove_member(
     .await
     .unwrap_or_default();
 
-    let seq = state.board_rooms.next_seq(&board_id);
-    state.board_rooms.publish(
-        &board_id,
-        BoardEvent::MemberChanged { board_seq: seq, client_id, card_id, member_ids },
-    );
+    // CR-04: publish_seq allocates seq and sends atomically.
+    state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::MemberChanged {
+        board_seq: seq, client_id, card_id, member_ids,
+    });
 
     Ok(())
 }
@@ -1089,22 +1078,19 @@ pub async fn update_card_title(
         })?;
 
     // Publish CardUpdated with title patch after successful DB write (T-6-07).
-    let seq = state.board_rooms.next_seq(&board_id);
-    state.board_rooms.publish(
-        &board_id,
-        BoardEvent::CardUpdated {
-            board_seq: seq,
-            client_id,
-            card_id,
-            patch: CardPatch {
-                title: Some(saved_title.clone()),
-                description: None,
-                cover: None,
-                done: None,
-                card_num: None,
-            },
+    // CR-04: publish_seq allocates seq and sends atomically.
+    state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::CardUpdated {
+        board_seq: seq,
+        client_id,
+        card_id,
+        patch: CardPatch {
+            title: Some(saved_title.clone()),
+            description: None,
+            cover: None,
+            done: None,
+            card_num: None,
         },
-    );
+    });
 
     Ok(saved_title)
 }
@@ -1143,22 +1129,19 @@ pub async fn update_card_description(
     // Note: we broadcast the raw markdown (not rendered HTML) as the patch value;
     // the WASM client does not render markdown — it updates display from the signal which
     // is patched from this broadcast. The modal itself re-renders from update_desc_action result.
-    let seq = state.board_rooms.next_seq(&board_id);
-    state.board_rooms.publish(
-        &board_id,
-        BoardEvent::CardUpdated {
-            board_seq: seq,
-            client_id,
-            card_id,
-            patch: CardPatch {
-                title: None,
-                description: Some(description.clone()),
-                cover: None,
-                done: None,
-                card_num: None,
-            },
+    // CR-04: publish_seq allocates seq and sends atomically.
+    state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::CardUpdated {
+        board_seq: seq,
+        client_id,
+        card_id,
+        patch: CardPatch {
+            title: None,
+            description: Some(description.clone()),
+            cover: None,
+            done: None,
+            card_num: None,
         },
-    );
+    });
 
     Ok(render_markdown(&description))
 }
@@ -1395,19 +1378,16 @@ pub async fn add_comment(
     })?;
 
     // Publish CommentAdded to the board broadcast channel (T-6-07).
-    let seq = state.board_rooms.next_seq(&board_id);
-    state.board_rooms.publish(
-        &board_id,
-        BoardEvent::CommentAdded {
-            board_seq: seq,
-            client_id,
-            card_id: card_id.clone(),
-            comment_id: entry.id.clone(),
-            author_id: user.id.clone(),
-            text: entry.text.clone(),
-            created_at: entry.created_at,
-        },
-    );
+    // CR-04: publish_seq allocates seq and sends atomically.
+    state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::CommentAdded {
+        board_seq: seq,
+        client_id,
+        card_id: card_id.clone(),
+        comment_id: entry.id.clone(),
+        author_id: user.id.clone(),
+        text: entry.text.clone(),
+        created_at: entry.created_at,
+    });
 
     // RT-04: publish per-user notification events to each mentioned board member.
     // T-6-19: per-user channel (not board broadcast); only the mentioned user receives it.
@@ -1716,15 +1696,12 @@ pub async fn move_card_cross_board(
     })?;
 
     // Publish CardMovedCrossBoard to the SOURCE board (card left this board — T-6-07).
-    let seq = state.board_rooms.next_seq(&from_board_id);
-    state.board_rooms.publish(
-        &from_board_id,
-        BoardEvent::CardMovedCrossBoard {
-            board_seq: seq,
-            client_id,
-            card_id,
-        },
-    );
+    // CR-04: publish_seq allocates seq and sends atomically.
+    state.board_rooms.publish_seq(&from_board_id, |seq| BoardEvent::CardMovedCrossBoard {
+        board_seq: seq,
+        client_id,
+        card_id,
+    });
 
     Ok(new_card_num)
 }
@@ -1777,11 +1754,10 @@ pub async fn archive_card(
         })?;
 
     // Publish CardArchived after successful DB write (T-6-07).
-    let seq = state.board_rooms.next_seq(&board_id);
-    state.board_rooms.publish(
-        &board_id,
-        BoardEvent::CardArchived { board_seq: seq, client_id, card_id },
-    );
+    // CR-04: publish_seq allocates seq and sends atomically.
+    state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::CardArchived {
+        board_seq: seq, client_id, card_id,
+    });
 
     Ok(())
 }

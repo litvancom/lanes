@@ -230,28 +230,25 @@ pub async fn create_card(
         })?;
 
     // Publish CardAdded after successful DB write (T-6-07: publish after ? propagation).
-    let seq = state.board_rooms.next_seq(&board_id);
-    state.board_rooms.publish(
-        &board_id,
-        BoardEvent::CardAdded {
-            board_seq: seq,
-            client_id,
-            card: CardSummary {
-                id: card.id.clone(),
-                list_id: card.list_id.clone(),
-                board_id: card.board_id.clone(),
-                card_num: card.card_num,
-                title: card.title.clone(),
-                position: card.position.clone(),
-                priority: card.priority.clone(),
-                due_at: card.due_at,
-                done: card.done,
-                cover: card.cover.clone(),
-                labels: card.labels.clone(),
-                member_ids: card.member_ids.clone(),
-            },
+    // CR-04: publish_seq allocates seq and sends atomically under the same entry guard.
+    state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::CardAdded {
+        board_seq: seq,
+        client_id,
+        card: CardSummary {
+            id: card.id.clone(),
+            list_id: card.list_id.clone(),
+            board_id: card.board_id.clone(),
+            card_num: card.card_num,
+            title: card.title.clone(),
+            position: card.position.clone(),
+            priority: card.priority.clone(),
+            due_at: card.due_at,
+            done: card.done,
+            cover: card.cover.clone(),
+            labels: card.labels.clone(),
+            member_ids: card.member_ids.clone(),
         },
-    );
+    });
 
     Ok(card)
 }
@@ -308,19 +305,15 @@ pub async fn move_card(
         })?;
 
     // Publish CardMoved event after successful DB write (Pattern 2).
-    // next_seq increments the per-board AtomicU64 and returns the new value.
+    // CR-04: publish_seq allocates seq and sends atomically under the same entry guard.
     // D-05: stamp client_id so the originator's WASM client can suppress its own highlight.
-    let seq = state.board_rooms.next_seq(&board_id);
-    state.board_rooms.publish(
-        &board_id,
-        BoardEvent::CardMoved {
-            board_seq: seq,
-            client_id,
-            card_id,
-            to_list_id,
-            position: new_position,
-        },
-    );
+    state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::CardMoved {
+        board_seq: seq,
+        client_id,
+        card_id,
+        to_list_id,
+        position: new_position,
+    });
 
     Ok(())
 }

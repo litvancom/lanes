@@ -94,6 +94,26 @@ impl BoardRoomRegistry {
         }
     }
 
+    /// Atomically allocate the next sequence number and broadcast the event in one step (CR-04).
+    ///
+    /// The `make` closure receives the allocated sequence number and returns the `BoardEvent`
+    /// to broadcast. Because both the seq increment and the send happen while the DashMap entry
+    /// guard is held, no concurrent mutation can interleave a `next_seq`+`publish` between them,
+    /// ensuring send order matches sequence order and defeating the TOCTOU race in CR-04.
+    ///
+    /// Use this method in place of the previous `next_seq(&id)` + `publish(&id, event)` pair
+    /// at every mutation call site.
+    pub fn publish_seq(&self, board_id: &str, make: impl FnOnce(u64) -> BoardEvent) {
+        let room = self.0
+            .entry(board_id.to_string())
+            .or_insert_with(|| BoardRoom {
+                tx: broadcast::channel(256).0,
+                seq: Arc::new(AtomicU64::new(0)),
+            });
+        let seq = room.seq.fetch_add(1, Ordering::SeqCst) + 1;
+        let _ = room.tx.send(make(seq));
+    }
+
     /// Return the current number of active broadcast receivers for a board.
     ///
     /// Used in the ws_handler cleanup log (SC4 diagnostics): after all tabs close,
