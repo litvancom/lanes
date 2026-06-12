@@ -13,6 +13,8 @@ pub mod state;
 #[cfg(feature = "ssr")]
 pub mod storage;
 #[cfg(feature = "ssr")]
+pub mod scheduler;
+#[cfg(feature = "ssr")]
 pub mod user_notif_registry;
 #[cfg(feature = "ssr")]
 pub mod ws_handler;
