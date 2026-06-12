@@ -79,11 +79,11 @@ pub fn WorkspaceSidebar(
                     </Show>
                 </a>
 
-                // Calendar — inert (D-12): no route; full markup for pixel fidelity
-                <span class="lns-sidebar-item lns-sidebar-item--inert" aria-disabled="true">
+                // Calendar — wired to /calendar (Phase 7, 07-03)
+                <a href="/calendar" class="lns-sidebar-item">
                     <Icon name="calendar"/>
                     <span>"Calendar"</span>
-                </span>
+                </a>
 
                 // Archive — navigates to /archive
                 <a href="/archive" class="lns-sidebar-item">
