@@ -160,17 +160,6 @@ pub async fn run_due_notification_scheduler(
         tracing::info!("scheduler: inserted {} due notifications", inserted.len());
 
         // For each inserted notification, publish a live UnreadCountUpdated to the user.
-        // Query user_id from the newly inserted rows (batch by user to avoid N+1).
-        let user_ids: Vec<String> = match sqlx::query_scalar(
-            "SELECT DISTINCT user_id FROM notifications WHERE id IN (SELECT id FROM notifications WHERE read = 0 ORDER BY created_at DESC LIMIT 1000)",
-        )
-        .fetch_all(&write_pool)
-        .await {
-            Ok(ids) => ids,
-            Err(_) => continue,
-        };
-
-        // More precisely: query affected user_ids from the inserted notifications
         for notif_id in &inserted {
             let row: Option<(String,)> = sqlx::query_as(
                 "SELECT user_id FROM notifications WHERE id = ?",
