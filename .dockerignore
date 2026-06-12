@@ -1,0 +1,45 @@
+# Lanes — Docker build context exclusions (T-07-23 / D-24)
+#
+# Keeps the build context small and ensures no local secrets, databases,
+# or dev artifacts are shipped into the builder image.
+
+# Rust build artifacts (large; rebuilt inside Docker)
+target/
+
+# Git history (not needed in build context)
+.git/
+.gitignore
+
+# Planning / project management artifacts
+.planning/
+.claude/
+.agents/
+
+# Node/npm (not used, but exclude if present)
+node_modules/
+
+# Local SQLite database files (D-24: never ship DB into image, T-07-23)
+*.db
+*.db-shm
+*.db-wal
+data/
+
+# Local secrets — never bake into the image (T-07-23)
+.env
+.env.local
+.env.*.local
+
+# Developer config / IDE
+.idea/
+.vscode/
+*.iml
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# tokensave index (dev tooling)
+.tokensave/
+
+# UI design references (not needed at build time)
+design-ref/

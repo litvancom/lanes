@@ -1,0 +1,44 @@
+# Lanes — docker compose stack (PLAT-02 / D-24)
+#
+# Single-service compose: builds the multi-stage image, mounts a named
+# volume at /data for the SQLite DB and local attachments, and exposes
+# the app on port 3000.
+#
+# Usage:
+#   docker compose up -d --build        # first boot (empty DB — sign up to start)
+#   SEED_DEMO=true docker compose up -d # load Mira's demo fixtures (empty DB only)
+#   docker compose down && docker compose up -d  # restart (data persists on lanes_data volume)
+#
+# Secrets: copy .env.example to .env and fill in real values.
+# Never commit .env (it is in .dockerignore and .gitignore).
+
+services:
+  lanes:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      # Database: SQLite on the named volume (D-24)
+      DATABASE_URL: "sqlite:///data/lanes.db"
+      # Site address: must match EXPOSE 3000 in Dockerfile
+      LEPTOS_SITE_ADDR: "0.0.0.0:3000"
+      LEPTOS_SITE_ROOT: "site"
+      # Local attachment storage under /data (switch to S3 via .env — see .env.example)
+      STORAGE_ROOT: "/data/attachments"
+      # Logging level (override in .env for debug)
+      RUST_LOG: "info"
+      # Optional demo seed — uncomment or set to "true" for a first-run demo DB (D-25)
+      # SEED_DEMO: "true"
+    volumes:
+      - lanes_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  lanes_data:
+    # Named volume: SQLite DB + attachments survive container recreation (T-07-25)
