@@ -96,6 +96,52 @@ pub fn ActivitySection(
                 " Activity"
             </h4>
 
+            // ── Typing indicator (06-04, D-10) ───────────────────────────────
+            // Shows when another user is typing in this card's comment composer.
+            // Collapses to zero height when nobody is typing (no layout shift).
+            {
+                let typing_card_ids = board_signals.map(|bs| bs.typing_card_ids);
+                let card_id_for_typing = card_id.get_value();
+                move || {
+                    if let Some(tids) = typing_card_ids {
+                        let typers = tids.with(|m| {
+                            m.get(&card_id_for_typing).cloned().unwrap_or_default()
+                        });
+                        if !typers.is_empty() {
+                            let first = typers[0].clone();
+                            let others = typers.len().saturating_sub(1);
+                            let label = if others == 0 {
+                                format!("{first} is typing…")
+                            } else {
+                                format!("{first} and {others} other{} are typing…",
+                                    if others == 1 { "" } else { "s" })
+                            };
+                            let first_letter = first.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+                            Some(view! {
+                                <div class="lns-typing-indicator">
+                                    <div
+                                        class="lns-avatar lns-avatar--sm"
+                                        style="background: var(--bg-subtle); color: var(--text-muted); font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center;"
+                                    >
+                                        {first_letter}
+                                    </div>
+                                    <span>{label}</span>
+                                    <div class="lns-typing-dots">
+                                        <span/>
+                                        <span/>
+                                        <span/>
+                                    </div>
+                                </div>
+                            }.into_any())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+            }
+
             // ── Composer ────────────────────────────────────────────────────
             <div class="lns-activity-composer" style="display: flex; gap: 10px; align-items: flex-start; margin-bottom: 16px">
                 // Author avatar placeholder (color resolved per current user)
@@ -124,10 +170,34 @@ pub fn ActivitySection(
                                 show_mention_picker.set(false);
                             }
                             comment_body.set(val);
+                            // Emit typing WS message (06-04, D-10).
+                            let cid = card_id.get_value();
+                            if let Some(bs) = board_signals {
+                                if let Some(send) = bs.ws_send.get_value() {
+                                    let msg = format!(
+                                        r#"{{"type":"typing","card_id":"{}","is_typing":true}}"#,
+                                        cid
+                                    );
+                                    send.call(msg);
+                                }
+                            }
                         }
                         on:keydown=move |ev: leptos::ev::KeyboardEvent| {
                             if ev.key() == "Escape" {
                                 show_mention_picker.set(false);
+                            }
+                        }
+                        on:blur=move |_| {
+                            // Stop-typing signal on blur (06-04, D-10).
+                            let cid = card_id.get_value();
+                            if let Some(bs) = board_signals {
+                                if let Some(send) = bs.ws_send.get_value() {
+                                    let msg = format!(
+                                        r#"{{"type":"typing","card_id":"{}","is_typing":false}}"#,
+                                        cid
+                                    );
+                                    send.call(msg);
+                                }
                             }
                         }
                     />

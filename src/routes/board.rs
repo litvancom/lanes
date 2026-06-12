@@ -20,12 +20,47 @@ use leptos_router::components::Outlet;
 use std::collections::{HashMap, HashSet};
 use crate::models::Card;
 use crate::api::board_api::{get_board, TouchLastViewed};
+use crate::api::auth_api::get_current_user;
 use crate::api::list_api::{CreateList, RenameList, ReorderList};
 use crate::api::card_api::MoveCard;
 use crate::components::board_header::BoardHeader;
 use crate::components::kanban_list::{KanbanList, AddListComposer, EmptyBoardCard};
 use crate::components::create_board_modal::CreateBoardModal;
 use crate::components::reconnect_toast::ReconnectToast;
+
+/// Wrapper around a WebSocket send closure that is `Clone + Send + Sync`.
+///
+/// Uses `Arc` so it can be cloned out of `StoredValue::get_value()`.
+/// Safety contract: this is only called from WASM microtask context (single-threaded).
+/// On SSR (x86 multi-threaded) the Option is always None so the fn is never invoked.
+#[derive(Clone)]
+pub struct WsSendFn(pub std::sync::Arc<WsSendFnInner>);
+
+/// Inner wrapper that satisfies Send + Sync via unsafe impl.
+/// SAFETY: WASM is single-threaded; on SSR this is never constructed or called.
+pub struct WsSendFnInner(pub Box<dyn Fn(String) + 'static>);
+unsafe impl Send for WsSendFnInner {}
+unsafe impl Sync for WsSendFnInner {}
+
+impl WsSendFn {
+    pub fn new(f: impl Fn(String) + 'static) -> Self {
+        Self(std::sync::Arc::new(WsSendFnInner(Box::new(f))))
+    }
+
+    pub fn call(&self, msg: String) {
+        (self.0.0)(msg);
+    }
+}
+
+/// Client-side display struct for a presence viewer (RT-03).
+/// Defined here so BoardSignals can hold a Vec of these without importing presence_registry
+/// (which is ssr-only). This is a small copy of the display fields from PresenceState.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PresenceViewer {
+    pub user_id: String,
+    pub display_name: String,
+    pub avatar_color: String,
+}
 
 /// Route params for `/board/:id`.
 #[derive(Params, PartialEq, Clone)]
@@ -102,6 +137,29 @@ pub struct BoardSignals {
     /// True when the WebSocket is successfully connected (received Connected handshake).
     /// False while connecting, disconnected, or reconnecting.
     pub ws_connected: RwSignal<bool>,
+    // ── Presence (06-04) ───────────────────────────────────────────────────
+    /// Current board viewers, excluding the current user (SC5: you don't see yourself).
+    /// Patched by WsEnvelope::Presence events: ViewersSnapshot replaces, ViewerJoined appends,
+    /// ViewerLeft removes.
+    pub viewers: RwSignal<Vec<PresenceViewer>>,
+    /// Maps card_id → Vec of display_names of users currently editing that card (D-10).
+    /// Patched by EditingCard presence events.
+    pub editing_card_ids: RwSignal<HashMap<String, Vec<String>>>,
+    /// Maps card_id → Vec of display_names of users currently typing in that card (D-10).
+    /// Patched by Typing presence events.
+    pub typing_card_ids: RwSignal<HashMap<String, Vec<String>>>,
+    /// Client→server WS send function, set by spawn_ws_task once connected.
+    /// Used by UI components to emit heartbeat/editing/typing messages without holding
+    /// a direct reference to the WebSocket (which is WASM-only).
+    ///
+    /// The inner function is wrapped in `WsSendFn` which is `Send + Sync` via a
+    /// safety contract: this is only called from WASM microtask context (single-threaded)
+    /// and never crosses thread boundaries at runtime.
+    pub ws_send: StoredValue<Option<WsSendFn>>,
+    /// The current user's own user_id (from session), used to exclude self from the viewer
+    /// stack (SC5: you don't see yourself). Set once during BoardPage mount via a server fn.
+    /// None on SSR (not needed server-side).
+    pub own_user_id: RwSignal<Option<String>>,
 }
 
 /// Board view page component (`/board/:id`).
@@ -246,10 +304,33 @@ pub fn BoardPage() -> impl IntoView {
                                     // RT-02 reconnect state
                                     reconnect_attempts: RwSignal::new(0),
                                     ws_connected: RwSignal::new(false),
+                                    // Presence (06-04)
+                                    viewers: RwSignal::new(Vec::new()),
+                                    editing_card_ids: RwSignal::new(HashMap::new()),
+                                    typing_card_ids: RwSignal::new(HashMap::new()),
+                                    ws_send: StoredValue::new(None),
+                                    own_user_id: RwSignal::new(None),
                                 };
 
                                 // Provide context for all child components
                                 provide_context(board_signals);
+
+                                // ── Own user_id for presence self-exclusion (SC5) ──────────
+                                // Fetch the current user's ID client-side via server fn so the
+                                // presence stack can exclude the current viewer (SC5 rule).
+                                // Runs in an Effect so it never blocks SSR rendering (Pitfall 6).
+                                {
+                                    let own_uid_sig = board_signals.own_user_id;
+                                    Effect::new(move |_| {
+                                        #[cfg(target_arch = "wasm32")]
+                                        wasm_bindgen_futures::spawn_local(async move {
+                                            if let Ok(Some(user)) = get_current_user().await {
+                                                own_uid_sig.set(Some(user.id));
+                                            }
+                                        });
+                                        let _ = own_uid_sig; // suppress unused warning in SSR
+                                    });
+                                }
 
                                 // ── Realtime WS task (Phase 6) ──────────────────────────────
                                 // Spawn the WS client task on mount (WASM only).

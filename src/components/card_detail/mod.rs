@@ -293,6 +293,26 @@ pub fn CardDetailModal(
                             });
                         }
 
+                        // 06-04: emit `{"type":"editing","card_id":"..."}` on modal open,
+                        // `{"type":"editing"}` (no card_id) on close (D-10).
+                        // Guarded to WASM only — the server-side render doesn't have a WS.
+                        {
+                            let cid_for_editing = card_id.clone();
+                            Effect::new(move |_| {
+                                let is_open = show.get();
+                                if let Some(bs) = board_signals {
+                                    if let Some(send) = bs.ws_send.get_value() {
+                                        let msg = if is_open {
+                                            format!(r#"{{"type":"editing","card_id":"{}"}}"#, cid_for_editing)
+                                        } else {
+                                            r#"{"type":"editing"}"#.to_string()
+                                        };
+                                        send.call(msg);
+                                    }
+                                }
+                            });
+                        }
+
                         // D-09: watch remote_archived_card_id; when it matches the open card,
                         // show the archive notice and navigate back to the board after 2500ms.
                         {
@@ -474,6 +494,48 @@ pub fn CardDetailModal(
                                                     {msg}
                                                 </div>
                                             })}
+
+                                            // ── Editing notice (06-04, D-10) ─────────────────
+                                            // Shows when another user has this card open in edit mode.
+                                            {
+                                                let editing_card_ids = board_signals.map(|bs| bs.editing_card_ids);
+                                                let card_id_for_editing = card_id.clone();
+                                                move || {
+                                                    if let Some(eids) = editing_card_ids {
+                                                        let editors = eids.with(|m| {
+                                                            m.get(&card_id_for_editing)
+                                                                .cloned()
+                                                                .unwrap_or_default()
+                                                        });
+                                                        if !editors.is_empty() {
+                                                            let first = editors[0].clone();
+                                                            let others = editors.len().saturating_sub(1);
+                                                            let label = if others == 0 {
+                                                                format!("{first} is editing this card")
+                                                            } else {
+                                                                format!("{first} and {others} other{} are editing this card",
+                                                                    if others == 1 { "" } else { "s" })
+                                                            };
+                                                            let first_letter = first.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+                                                            Some(view! {
+                                                                <div class="lns-editing-notice">
+                                                                    <div
+                                                                        class="lns-avatar lns-avatar--sm"
+                                                                        style=format!("background: var(--accent); color: var(--text-inverse); font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center;")
+                                                                    >
+                                                                        {first_letter}
+                                                                    </div>
+                                                                    <span>{label}</span>
+                                                                </div>
+                                                            }.into_any())
+                                                        } else {
+                                                            None
+                                                        }
+                                                    } else {
+                                                        None
+                                                    }
+                                                }
+                                            }
 
                                             // Member avatar stack + created-at
                                             <div style="display: flex; align-items: center; gap: 6px; margin-top: 4px">

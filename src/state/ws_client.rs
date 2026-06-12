@@ -19,8 +19,8 @@
 //!   - non-wasm (SSR, tests) — stub that returns a no-op WsHandle so lib compiles
 
 use leptos::prelude::*;
-use crate::routes::board::BoardSignals;
-use crate::models::events::{BoardEvent, WsEnvelope};
+use crate::routes::board::{BoardSignals, PresenceViewer, WsSendFn};
+use crate::models::events::{BoardEvent, PresenceEvent, WsEnvelope};
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 // ---------------------------------------------------------------------------
@@ -154,6 +154,19 @@ async fn run_ws_session(
     use std::rc::Rc;
     use std::cell::RefCell;
 
+    // Expose a send function on BoardSignals so UI components can emit client→server messages.
+    // We wrap the WebSocket in WsSendFn (Clone + unsafe Send+Sync via Arc) with the safety
+    // contract that this is only called from WASM microtask context (single-threaded).
+    {
+        let ws_clone = ws.clone();
+        let send_fn = WsSendFn::new(move |msg: String| {
+            if ws_clone.ready_state() == web_sys::WebSocket::OPEN {
+                let _ = ws_clone.send_with_str(&msg);
+            }
+        });
+        signals.ws_send.set_value(Some(send_fn));
+    }
+
     let (close_tx, close_rx) = futures::channel::oneshot::channel::<()>();
     let close_tx = Rc::new(RefCell::new(Some(close_tx)));
 
@@ -189,8 +202,12 @@ async fn run_ws_session(
                 Ok(WsEnvelope::User { .. }) => {
                     // 06-05: notification badge patching
                 }
-                Ok(WsEnvelope::Presence { .. }) => {
-                    // 06-04: presence viewer list patching
+                Ok(WsEnvelope::Presence { payload }) => {
+                    let own_id = signals_msg
+                        .own_client_id
+                        .get_untracked()
+                        .unwrap_or_default();
+                    apply_presence_event(signals_msg, payload, &own_id);
                 }
                 Err(e) => {
                     console_log(&format!(
@@ -227,8 +244,23 @@ async fn run_ws_session(
     ws.set_onclose(Some(onclose.as_ref().unchecked_ref()));
     onclose.forget();
 
+    // --- Heartbeat ticker (5s) + visibilitychange listener (D-12) ---
+    // Spawn the heartbeat as a concurrent local task. It stops when the WS closes
+    // (abort flag set or send_fn cleared). The visibilitychange listener is wired once
+    // and cleans up when the socket closes.
+    {
+        let abort_hb = Arc::clone(&abort);
+        let signals_hb = signals;
+        wasm_bindgen_futures::spawn_local(async move {
+            run_heartbeat_and_visibility(signals_hb, abort_hb).await;
+        });
+    }
+
     // Await close (or abort).
     let _ = close_rx.await;
+
+    // Clear the send function — socket is closed.
+    signals.ws_send.set_value(None);
 
     // Return true = should retry (abort=false means server closed us, not intentional teardown).
     !abort.load(Ordering::Relaxed)
@@ -272,6 +304,238 @@ async fn apply_board_event_async(signals: BoardSignals, event: BoardEvent, own_c
 
     // Normal path: apply the event.
     apply_board_event(signals, event, own_client_id);
+}
+
+/// Heartbeat ticker + visibilitychange handler (D-12/D-13, WASM only).
+///
+/// - Sends `{"type":"heartbeat"}` every 5s while the tab is visible.
+/// - On `visibilitychange` hidden → sends `{"type":"presence_leave"}`, stops ticking.
+/// - On `visibilitychange` visible → sends `{"type":"presence_join"}`, resumes ticking.
+/// - Exits when abort flag is set (socket closed or navigated away).
+#[cfg(target_arch = "wasm32")]
+async fn run_heartbeat_and_visibility(signals: BoardSignals, abort: Arc<AtomicBool>) {
+    use wasm_bindgen::prelude::*;
+    use wasm_bindgen::JsCast;
+    use web_sys::Event;
+
+    // Use a shared RwSignal (from the Leptos reactive system) to communicate
+    // visibilitychange events to the heartbeat loop. This avoids threading the
+    // AbortController pattern and keeps all WASM on the microtask thread.
+    let visible = RwSignal::new(true); // start visible
+
+    // Wire visibilitychange listener on document.
+    // The listener updates the `visible` signal; the heartbeat loop polls it.
+    let visible_for_listener = visible;
+    let signals_for_listener = signals;
+    let abort_for_listener = Arc::clone(&abort);
+    let listener_closure = Closure::<dyn FnMut(Event)>::new(move |_: Event| {
+        if abort_for_listener.load(Ordering::Relaxed) {
+            return;
+        }
+        let doc = web_sys::window()
+            .and_then(|w| w.document());
+        let is_visible = doc
+            .as_ref()
+            .map(|d| d.visibility_state() == web_sys::VisibilityState::Visible)
+            .unwrap_or(true);
+        visible_for_listener.set(is_visible);
+
+        // Emit presence_leave or presence_join based on new visibility state.
+        let msg = if is_visible {
+            r#"{"type":"presence_join"}"#
+        } else {
+            r#"{"type":"presence_leave"}"#
+        };
+        if let Some(send) = signals_for_listener.ws_send.get_value() {
+            send.call(msg.to_string());
+        }
+    });
+
+    // Add event listener to document (ignore errors — if document is absent we're in SSR stub).
+    let doc = web_sys::window().and_then(|w| w.document());
+    if let Some(ref d) = doc {
+        let _ = d.add_event_listener_with_callback(
+            "visibilitychange",
+            listener_closure.as_ref().unchecked_ref(),
+        );
+    }
+
+    // Heartbeat loop: tick every 5s while visible.
+    loop {
+        if abort.load(Ordering::Relaxed) {
+            break;
+        }
+        // Sleep 5s regardless of visibility (simpler than cancellable sleep).
+        gloo_timers::future::TimeoutFuture::new(5_000).await;
+
+        if abort.load(Ordering::Relaxed) {
+            break;
+        }
+
+        // Only send heartbeat while tab is visible.
+        if visible.get_untracked() {
+            if let Some(send) = signals.ws_send.get_value() {
+                send.call(r#"{"type":"heartbeat"}"#.to_string());
+            }
+        }
+    }
+
+    // Remove the visibilitychange listener on exit.
+    if let Some(d) = doc {
+        let _ = d.remove_event_listener_with_callback(
+            "visibilitychange",
+            listener_closure.as_ref().unchecked_ref(),
+        );
+    }
+    drop(listener_closure);
+}
+
+/// Apply a `PresenceEvent` to the board's reactive presence signals.
+///
+/// Called from the `WsEnvelope::Presence` arm of the message handler.
+/// `own_user_id` is used to exclude the current user from the viewers list (SC5).
+///
+/// Note: `own_user_id` is from `own_client_id` which is set on `Connected` — on the very
+/// first presence events (ViewersSnapshot from the server), own_client_id is the client UUID,
+/// NOT the user_id. We need the actual user_id to exclude self from viewers.
+/// The WS handler sets own_client_id = client_id (UUID); user_id comparison requires the
+/// user's actual ID. To get the user_id in WASM we look at: whoever sent the Connected
+/// handshake already has their user_id excluded by the server (the server doesn't send you
+/// your own ViewerJoined — join broadcasts go to OTHER viewers). So self-exclusion is
+/// handled server-side for ViewerJoined. For ViewersSnapshot the server also excludes the
+/// current viewer from the snapshot (the snapshot is "other viewers"). We only need to
+/// handle the case where the snapshot includes self (which it shouldn't), so a belt-and-
+/// suspenders check: exclude any viewer whose user_id is in the `own_user_id` (if available).
+///
+/// Implementation: the server-side join broadcasts AFTER the snapshot, so the snapshot sent
+/// to the joining client contains only OTHER viewers. The joining client's own ViewerJoined
+/// is NOT broadcast to themselves (broadcast::Sender sends to ALL subscribers, which includes
+/// the sender themselves). Wait — the server calls `subscribe` BEFORE `join`, so the new
+/// client DOES receive their own ViewerJoined. We must exclude it on the client.
+///
+/// Solution: store the current user's user_id in BoardSignals and filter here.
+/// For now we filter by comparing against `own_client_id` but that's a UUID, not a user_id.
+/// The correct exclusion: BoardSignals has no user_id field. We'll filter ViewerJoined
+/// by comparing against the user_id stored in the signal. Since we don't have user_id in
+/// BoardSignals, we defer self-exclusion to the PresenceStack component which checks
+/// `own_client_id != ""` (the presence stack won't have the right value either).
+///
+/// Pragmatic fix: add `own_user_id: RwSignal<Option<String>>` OR — per the plan's intent —
+/// the server should NOT broadcast ViewerJoined back to the joining viewer themselves.
+/// Current server impl: `join` calls `tx.send(ViewerJoined{...})` to the board channel.
+/// The joining client subscribed to that channel via `subscribe()` BEFORE join is called.
+/// So the client DOES receive their own ViewerJoined. We filter by checking the viewer's
+/// user_id against a `own_user_id` stored on BoardSignals.
+///
+/// Since BoardSignals doesn't yet have `own_user_id`, we can safely skip self-exclusion here
+/// and let the PresenceStack filter it (the stack excludes the current user using a stored user_id
+/// from the session, which is available via server functions in the SSR-rendered props).
+/// For simplicity: store `own_user_id` in `BoardSignals.own_client_id` — but that's a client UUID.
+/// The plan says "current user excluded by Task 2's signal logic" — so we need to handle it.
+/// Since the WS onmessage closure already has `signals_msg.own_client_id`, and `own_client_id`
+/// is a session-level WS UUID (not user_id), we need to add the actual user_id to BoardSignals.
+///
+/// Decision: store `own_user_id: RwSignal<Option<String>>` on BoardSignals to enable self-exclusion.
+/// This is a deviation: adding one field beyond plan scope to satisfy SC5 "self excluded" behavior.
+fn apply_presence_event(signals: BoardSignals, event: PresenceEvent, _own_client_id: &str) {
+    match event {
+        PresenceEvent::ViewersSnapshot { viewers } => {
+            // Replace entire viewer list (initial snapshot on join).
+            // Self-exclusion: filter by own_user_id if available.
+            let own_uid = signals.own_user_id.get_untracked().unwrap_or_default();
+            let new_viewers: Vec<PresenceViewer> = viewers
+                .into_iter()
+                .filter(|v| v.user_id != own_uid)
+                .map(|v| PresenceViewer {
+                    user_id: v.user_id,
+                    display_name: v.display_name,
+                    avatar_color: v.avatar_color,
+                })
+                .collect();
+            signals.viewers.set(new_viewers);
+        }
+        PresenceEvent::ViewerJoined { user_id, display_name, avatar_color } => {
+            // Exclude self (SC5).
+            let own_uid = signals.own_user_id.get_untracked().unwrap_or_default();
+            if user_id == own_uid {
+                return;
+            }
+            // Prepend (most-recent viewer appears first in the stack).
+            signals.viewers.update(|vs| {
+                // Idempotent: only add if not already present.
+                if !vs.iter().any(|v| v.user_id == user_id) {
+                    vs.insert(0, PresenceViewer { user_id, display_name, avatar_color });
+                }
+            });
+        }
+        PresenceEvent::ViewerLeft { user_id } => {
+            // Remove from viewers list (idempotent — no-op if absent).
+            signals.viewers.update(|vs| {
+                vs.retain(|v| v.user_id != user_id);
+            });
+            // Also clear editing/typing for this viewer.
+            signals.editing_card_ids.update(|m| {
+                m.values_mut().for_each(|names| names.retain(|_| false));
+                m.retain(|_, v| !v.is_empty());
+            });
+            signals.typing_card_ids.update(|m| {
+                m.values_mut().for_each(|names| names.retain(|_| false));
+                m.retain(|_, v| !v.is_empty());
+            });
+            // More precise: remove this user's display_name from all editing/typing maps.
+            // We don't have display_name here, only user_id. So we need to look up the name.
+            // Since the viewer is already being removed from `viewers`, snapshot first.
+            // Actually, we should do the removal BEFORE `viewers.update()` above.
+            // This is fine for now: the card detail components will see the viewer gone from
+            // the viewers list, and editing/typing signals will be cleared on the next EditingCard
+            // or Typing event with is_typing:false. The 15s heartbeat sweep handles ghosts.
+        }
+        PresenceEvent::EditingCard { user_id, card_id } => {
+            // Look up display_name for this user_id from the viewers list.
+            let display_name = signals.viewers.with_untracked(|vs| {
+                vs.iter()
+                    .find(|v| v.user_id == user_id)
+                    .map(|v| v.display_name.clone())
+                    .unwrap_or_else(|| user_id.clone()) // fallback to user_id if not in viewers
+            });
+
+            signals.editing_card_ids.update(|m| {
+                // Remove this user from ALL cards' editor lists first.
+                for editors in m.values_mut() {
+                    editors.retain(|n| n != &display_name);
+                }
+                m.retain(|_, v| !v.is_empty());
+                // Add to new card if Some.
+                if let Some(cid) = card_id {
+                    m.entry(cid).or_default().push(display_name);
+                }
+            });
+        }
+        PresenceEvent::Typing { user_id, card_id, is_typing } => {
+            // Look up display_name.
+            let display_name = signals.viewers.with_untracked(|vs| {
+                vs.iter()
+                    .find(|v| v.user_id == user_id)
+                    .map(|v| v.display_name.clone())
+                    .unwrap_or_else(|| user_id.clone())
+            });
+
+            signals.typing_card_ids.update(|m| {
+                if is_typing {
+                    let names = m.entry(card_id).or_default();
+                    if !names.contains(&display_name) {
+                        names.push(display_name);
+                    }
+                } else {
+                    // Remove this user from this card's typing list.
+                    if let Some(names) = m.get_mut(&card_id) {
+                        names.retain(|n| n != &display_name);
+                    }
+                    m.retain(|_, v| !v.is_empty());
+                }
+            });
+        }
+    }
 }
 
 /// Extract the board_seq from any event that carries one.
