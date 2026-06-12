@@ -298,6 +298,9 @@ pub async fn update_board(
 
     match result {
         Ok(_) => {
+            // Publish Refresh so any open board tabs pick up the name/color change (D-20).
+            state.board_rooms.publish(&board_id, crate::models::events::BoardEvent::Refresh);
+
             let dto = BoardDto {
                 id: cur_id,
                 name: new_name,
@@ -350,7 +353,11 @@ pub async fn delete_board(
     }
 
     match delete_board_inner(&state.write_pool.0, &board_id).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => {
+            // Publish Refresh so any open board tabs are notified the board is gone (D-20).
+            state.board_rooms.publish(&board_id, crate::models::events::BoardEvent::Refresh);
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(e) => {
             tracing::error!("delete_board REST error: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "internal error"}))).into_response()

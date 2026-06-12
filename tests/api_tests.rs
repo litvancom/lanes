@@ -390,3 +390,111 @@ mod api_tests {
         assert_eq!(boards[1].name, "Beta");
     }
 }
+
+// ---------------------------------------------------------------------------
+// REST API IDOR tests (Task 2b Wave-0)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "ssr")]
+mod idor_tests {
+    use lanes::server::db::{init_pools, run_migrations};
+    use lanes::server::rest_api::boards::require_member;
+    use lanes::api::workspace_api::derive_key_prefix;
+    use tempfile::NamedTempFile;
+
+    async fn test_db() -> (NamedTempFile, sqlx::SqlitePool) {
+        let file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_str().expect("path").to_string();
+        let url = format!("sqlite://{}", path);
+        let (write_pool, _read_pool) = init_pools(&url).await.expect("init pools");
+        run_migrations(&write_pool).await.expect("migrations");
+        (file, write_pool)
+    }
+
+    async fn insert_user(pool: &sqlx::SqlitePool, email: &str) -> String {
+        use uuid::Uuid;
+        let id = Uuid::now_v7().to_string();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        sqlx::query!(
+            r#"INSERT INTO users (id, email, display_name, avatar_color, auth_provider, created_at)
+               VALUES (?, ?, ?, '#7c5cff', 'password', ?)"#,
+            id, email, email, now
+        )
+        .execute(pool)
+        .await
+        .expect("insert user");
+        id
+    }
+
+    async fn insert_board(pool: &sqlx::SqlitePool, name: &str, owner_id: &str) -> String {
+        use uuid::Uuid;
+        let id = Uuid::now_v7().to_string();
+        let kp = derive_key_prefix(name);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        sqlx::query!(
+            "INSERT INTO boards (id, name, key_prefix, color, starred, archived, created_at, updated_at)
+             VALUES (?, ?, ?, '#7c5cff', 0, 0, ?, ?)",
+            id, name, kp, now, now
+        )
+        .execute(pool)
+        .await
+        .expect("insert board");
+        sqlx::query!(
+            "INSERT INTO board_members (board_id, user_id, role) VALUES (?, ?, 'owner')",
+            id, owner_id
+        )
+        .execute(pool)
+        .await
+        .expect("insert member");
+        id
+    }
+
+    /// IDOR negative case: a token owner cannot access a board they are not a member of.
+    ///
+    /// `require_member` is the per-request membership gate used by every board-scoped
+    /// REST handler. This test asserts it returns a 404 (not 403, not 401 — no existence leak)
+    /// when the requesting user is not in board_members for the target board (D-16, T-07-14).
+    #[tokio::test]
+    async fn api_list_boards_idor_non_member_gets_404() {
+        let (_file, pool) = test_db().await;
+
+        // alice owns board_a; bob is NOT a member of board_a
+        let alice = insert_user(&pool, "alice@test.com").await;
+        let bob = insert_user(&pool, "bob@test.com").await;
+        let board_a = insert_board(&pool, "Alice Board", &alice).await;
+
+        // Bob tries to access Alice's board via the membership gate
+        let result = require_member(&pool, &board_a, &bob).await;
+        assert!(result.is_err(), "non-member should be rejected");
+
+        // The rejection response must encode 404 (not 403/401 — no IDOR existence leak)
+        let response = result.unwrap_err();
+        // require_member produces a 404 Response; verify by converting to Parts
+        use axum::response::IntoResponse;
+        let (parts, _body) = response.into_response().into_parts();
+        assert_eq!(
+            parts.status,
+            axum::http::StatusCode::NOT_FOUND,
+            "non-member must receive 404 to prevent IDOR existence leak"
+        );
+    }
+
+    /// Positive case: a legitimate member receives Ok(role).
+    #[tokio::test]
+    async fn api_list_boards_member_gets_role() {
+        let (_file, pool) = test_db().await;
+
+        let alice = insert_user(&pool, "alice@test.com").await;
+        let board_a = insert_board(&pool, "Alice Board", &alice).await;
+
+        let result = require_member(&pool, &board_a, &alice).await;
+        assert!(result.is_ok(), "owner should be admitted");
+        assert_eq!(result.unwrap(), "owner");
+    }
+}
