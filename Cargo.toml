@@ -78,6 +78,7 @@ gloo-timers = { version = "0.3", optional = true, features = ["futures"] }
 default = []
 hydrate = [
     "leptos/hydrate",
+    "dep:chrono",
     "dep:console_error_panic_hook",
     "dep:wasm-bindgen",
     "dep:js-sys",
