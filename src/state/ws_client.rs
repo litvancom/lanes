@@ -1011,11 +1011,15 @@ pub fn apply_board_event(signals: BoardSignals, event: BoardEvent, own_client_id
             }
         }
 
-        BoardEvent::AttachmentAdded { board_seq, client_id: _, card_id, .. } => {
+        BoardEvent::AttachmentAdded { board_seq, client_id, card_id, .. } => {
             signals.last_seen_seq.set(board_seq);
-            let card_sig = signals.card_signals.with_untracked(|cs| cs.get(&card_id).copied());
-            if let Some(sig) = card_sig {
-                sig.update(|c| c.attachment_count += 1);
+            // D-05: suppress echo on the originator's own client (matches CommentAdded/CardMoved pattern)
+            let is_remote = client_id.as_str() != own_client_id || own_client_id.is_empty();
+            if is_remote {
+                let card_sig = signals.card_signals.with_untracked(|cs| cs.get(&card_id).copied());
+                if let Some(sig) = card_sig {
+                    sig.update(|c| c.attachment_count += 1);
+                }
             }
         }
 
