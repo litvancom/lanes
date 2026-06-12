@@ -227,6 +227,40 @@ mod tests {
             BoardEvent::CardMovedCrossBoard { card_id, .. } => assert_eq!(card_id, "card-5"),
             _ => panic!("CardMovedCrossBoard round-trip failed"),
         }
+
+        // AttachmentAdded
+        let ev = BoardEvent::AttachmentAdded {
+            board_seq: 14,
+            client_id: "c-14".into(),
+            card_id: "card-1".into(),
+            attachment_id: "att-1".into(),
+            filename: "photo.png".into(),
+            url: "/api/attachments/board-1/card-1/att-1.png".into(),
+            size_bytes: 204800,
+        };
+        match rt(ev) {
+            BoardEvent::AttachmentAdded { board_seq, client_id, filename, .. } => {
+                assert_eq!(board_seq, 14);
+                assert_eq!(client_id, "c-14");
+                assert_eq!(filename, "photo.png");
+            }
+            _ => panic!("AttachmentAdded round-trip failed"),
+        }
+
+        // AttachmentRemoved
+        let ev = BoardEvent::AttachmentRemoved {
+            board_seq: 15,
+            client_id: "c-15".into(),
+            card_id: "card-1".into(),
+            attachment_id: "att-1".into(),
+        };
+        match rt(ev) {
+            BoardEvent::AttachmentRemoved { board_seq, attachment_id, .. } => {
+                assert_eq!(board_seq, 15);
+                assert_eq!(attachment_id, "att-1");
+            }
+            _ => panic!("AttachmentRemoved round-trip failed"),
+        }
     }
 
     /// Placeholder for lagged receiver → Refresh behavior (filled by 06-03).
