@@ -148,7 +148,7 @@ mod tests {
 
 #[cfg(all(test, feature = "ssr"))]
 mod generator_tests {
-    use lanes::server::db::{init_pools, run_migrations};
+    use lanes::server::db::run_migrations;
     use lanes::server::scheduler::scan_due_notifications_once;
     use lanes::api::notification_api::{insert_notification_inner, notify_watchers_inner};
     use tempfile::NamedTempFile;
@@ -159,7 +159,9 @@ mod generator_tests {
         let file = NamedTempFile::new().expect("temp file");
         let path = file.path().to_str().expect("path").to_string();
         let url = format!("sqlite://{}", path);
-        let (write_pool, _read_pool) = init_pools(&url).await.expect("init pools");
+        let write_pool = lanes::server::db::make_write_pool(&url)
+            .await
+            .expect("make_write_pool");
         run_migrations(&write_pool).await.expect("migrations");
         (file, write_pool)
     }
@@ -188,28 +190,16 @@ mod generator_tests {
     /// Insert a minimal board; returns board_id.
     async fn insert_board(pool: &sqlx::SqlitePool, owner_id: &str) -> String {
         let id = Uuid::now_v7().to_string();
-        let ws_id = Uuid::now_v7().to_string();
         let now: i64 = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
-        // minimal workspace first
-        sqlx::query(
-            "INSERT INTO workspaces (id, name, owner_id, created_at) VALUES (?, 'ws', ?, ?)",
-        )
-        .bind(&ws_id)
-        .bind(owner_id)
-        .bind(now)
-        .execute(pool)
-        .await
-        .expect("insert workspace");
 
         sqlx::query(
-            "INSERT INTO boards (id, workspace_id, name, color, next_card_num, created_at, updated_at) \
-             VALUES (?, ?, 'board', '#ff0', 1, ?, ?)",
+            "INSERT INTO boards (id, name, key_prefix, color, next_card_num, starred, archived, created_at, updated_at) \
+             VALUES (?, 'board', 'TST', '#ff0', 1, 0, 0, ?, ?)",
         )
         .bind(&id)
-        .bind(&ws_id)
         .bind(now)
         .bind(now)
         .execute(pool)
@@ -218,11 +208,10 @@ mod generator_tests {
 
         // owner is a member
         sqlx::query(
-            "INSERT INTO board_members (board_id, user_id, role, joined_at) VALUES (?, ?, 'admin', ?)",
+            "INSERT INTO board_members (board_id, user_id, role) VALUES (?, ?, 'owner')",
         )
         .bind(&id)
         .bind(owner_id)
-        .bind(now)
         .execute(pool)
         .await
         .expect("insert board_member");
@@ -244,23 +233,22 @@ mod generator_tests {
             .as_millis() as i64;
 
         sqlx::query(
-            "INSERT INTO lists (id, board_id, name, position, is_done_list, created_at) \
-             VALUES (?, ?, 'list', 'a', 0, ?)",
+            "INSERT INTO lists (id, board_id, name, position, archived) \
+             VALUES (?, ?, 'list', 'a', 0)",
         )
         .bind(&list_id)
         .bind(board_id)
-        .bind(now)
         .execute(pool)
         .await
         .expect("insert list");
 
         sqlx::query(
-            "INSERT INTO cards (id, board_id, list_id, card_num, title, position, done, archived, created_at, updated_at, due_at) \
+            "INSERT INTO cards (id, list_id, board_id, card_num, title, position, done, archived, created_at, updated_at, due_at) \
              VALUES (?, ?, ?, 1, 'card', 'a', 0, 0, ?, ?, ?)",
         )
         .bind(&card_id)
-        .bind(board_id)
         .bind(&list_id)
+        .bind(board_id)
         .bind(now)
         .bind(now)
         .bind(due_at)
@@ -362,11 +350,10 @@ mod generator_tests {
             .unwrap()
             .as_millis() as i64;
         sqlx::query(
-            "INSERT INTO board_members (board_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)",
+            "INSERT INTO board_members (board_id, user_id, role) VALUES (?, ?, 'member')",
         )
         .bind(&board_id)
         .bind(&watcher_id)
-        .bind(now_ms)
         .execute(&pool)
         .await
         .expect("add watcher as board member");
@@ -445,11 +432,10 @@ mod generator_tests {
 
         // Add assignee as board member
         sqlx::query(
-            "INSERT INTO board_members (board_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)",
+            "INSERT INTO board_members (board_id, user_id, role) VALUES (?, ?, 'member')",
         )
         .bind(&board_id)
         .bind(&assignee_id)
-        .bind(now_ms)
         .execute(&pool)
         .await
         .expect("add assignee as board member");

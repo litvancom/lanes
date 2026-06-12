@@ -189,6 +189,19 @@ async fn start_server() {
         });
     }
 
+    // Due-notification scheduler (INBOX-01 D-01/D-02/D-05): every 5 min, scan overdue/due_soon.
+    {
+        let sched_pool = app_state.write_pool.0.clone();
+        let sched_notifs = app_state.user_notifs.clone();
+        tokio::spawn(lanes::server::scheduler::run_due_notification_scheduler(sched_pool, sched_notifs));
+    }
+
+    // Read-notification cleanup (INBOX-01 D-10): hourly prune of read rows older than 30 days.
+    {
+        let cleanup_pool = app_state.write_pool.0.clone();
+        tokio::spawn(lanes::server::scheduler::run_notif_cleanup(cleanup_pool));
+    }
+
     let app = Router::new()
         // Attachment upload/download routes (plain Axum — not Leptos server fns, DETAIL-08).
         // Must be registered BEFORE .layer(auth_layer) so the session/auth layer wraps them.
