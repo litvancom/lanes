@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod events;
+pub mod rest_dto;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Board {
