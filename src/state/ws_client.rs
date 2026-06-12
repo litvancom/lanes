@@ -1062,3 +1062,193 @@ pub fn apply_board_event(signals: BoardSignals, event: BoardEvent, own_client_id
 pub fn spawn_ws_task(_board_id: String, _signals: BoardSignals) -> WsHandle {
     WsHandle::new(Arc::new(AtomicBool::new(false)))
 }
+
+// ---------------------------------------------------------------------------
+// Per-user notification WebSocket client task (RT-04 / 06-06)
+// ---------------------------------------------------------------------------
+
+/// Apply an `UnreadCountUpdated` count to the two bare notification signals.
+///
+/// Sets the count and triggers a ~200ms increment-only pulse (UI-SPEC §301).
+/// Shared by both the board path (`apply_notif_event` via BoardSignals) and the new
+/// notification-only socket path (`spawn_notif_task`).
+#[cfg(target_arch = "wasm32")]
+fn apply_unread_count(unread_count: RwSignal<i64>, badge_pulse: RwSignal<bool>, count: i64) {
+    let prev = unread_count.get_untracked();
+    unread_count.set(count);
+    // Pulse only on increment (UI-SPEC §301).
+    if count > prev {
+        badge_pulse.set(true);
+        let pulse_sig = badge_pulse;
+        wasm_bindgen_futures::spawn_local(async move {
+            gloo_timers::future::TimeoutFuture::new(200).await;
+            pulse_sig.set(false);
+        });
+    }
+}
+
+/// Build the WebSocket URL for the per-user notification socket.
+///
+/// Returns `ws(s)://host/ws/notifications` using the same scheme-detection as `ws_url_for`.
+#[cfg(target_arch = "wasm32")]
+fn notif_ws_url() -> String {
+    let location = web_sys::window()
+        .and_then(|w| w.location().host().ok())
+        .unwrap_or_else(|| "localhost:3000".to_string());
+
+    let protocol = web_sys::window()
+        .and_then(|w| w.location().protocol().ok())
+        .unwrap_or_else(|| "http:".to_string());
+
+    let ws_scheme = if protocol == "https:" { "wss" } else { "ws" };
+    format!("{ws_scheme}://{location}/ws/notifications")
+}
+
+/// Reconnect loop for the per-user notification socket.
+///
+/// Mirrors `reconnect_loop` but operates on bare `RwSignal` instead of `BoardSignals`,
+/// has no heartbeat, no board/presence handling, and re-seeds the unread count via
+/// `get_unread_count()` on every (re)connect (recovery for missed events while disconnected).
+#[cfg(target_arch = "wasm32")]
+async fn notif_reconnect_loop(
+    unread_count: RwSignal<i64>,
+    badge_pulse: RwSignal<bool>,
+    abort: Arc<AtomicBool>,
+) {
+    use web_sys::WebSocket;
+    use wasm_bindgen::prelude::*;
+    use wasm_bindgen::JsCast;
+    use web_sys::MessageEvent;
+    use std::rc::Rc;
+    use std::cell::RefCell;
+    use leptos::leptos_dom::logging::console_log;
+    use crate::api::notification_api::get_unread_count;
+
+    let mut backoff_ms: u64 = 1000;
+
+    loop {
+        if abort.load(Ordering::Relaxed) {
+            break;
+        }
+
+        // Re-seed the count on every connect — the notification socket has no seq-gap
+        // recovery, so fetching the current count covers any events missed while offline.
+        if let Ok(count) = get_unread_count().await {
+            unread_count.set(count);
+        }
+
+        let url = notif_ws_url();
+        let ws = match WebSocket::new(&url) {
+            Ok(ws) => ws,
+            Err(e) => {
+                console_log(&format!("[notif-ws] open error: {e:?}"));
+                let jitter_fraction = js_sys::Math::random();
+                let jitter_offset =
+                    (backoff_ms as f64 * 0.25 * (jitter_fraction * 2.0 - 1.0)) as i64;
+                let sleep_ms = (backoff_ms as i64 + jitter_offset).max(100) as u32;
+                gloo_timers::future::TimeoutFuture::new(sleep_ms).await;
+                backoff_ms = (backoff_ms * 2).min(30_000);
+                continue;
+            }
+        };
+
+        // Wire onmessage / onerror / onclose via a oneshot close channel.
+        let (close_tx, close_rx) = futures::channel::oneshot::channel::<()>();
+        let close_tx = Rc::new(RefCell::new(Some(close_tx)));
+
+        let abort_msg = Arc::clone(&abort);
+        let onmessage = {
+            let unread_count = unread_count;
+            let badge_pulse = badge_pulse;
+            Closure::<dyn FnMut(MessageEvent)>::new(move |e: MessageEvent| {
+                if abort_msg.load(Ordering::Relaxed) {
+                    return;
+                }
+                if let Some(text) = e.data().as_string() {
+                    use crate::models::events::{WsEnvelope, NotifEvent};
+                    match serde_json::from_str::<WsEnvelope>(&text) {
+                        Ok(WsEnvelope::User { payload }) => {
+                            if let NotifEvent::UnreadCountUpdated { count } = payload {
+                                apply_unread_count(unread_count, badge_pulse, count);
+                            }
+                            // MentionReceived: no-op (Phase 7 inbox list wiring)
+                        }
+                        Ok(_) => {} // Board/Presence envelopes unexpected on this socket — ignore
+                        Err(e) => {
+                            console_log(&format!("[notif-ws] deserialize error: {e}"));
+                        }
+                    }
+                }
+            })
+        };
+        ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
+        onmessage.forget();
+
+        let close_tx_clone = Rc::clone(&close_tx);
+        let abort_close = Arc::clone(&abort);
+        let onclose = Closure::<dyn FnMut(web_sys::CloseEvent)>::new(
+            move |_: web_sys::CloseEvent| {
+                if !abort_close.load(Ordering::Relaxed) {
+                    console_log("[notif-ws] connection closed — will reconnect");
+                }
+                if let Some(tx) = close_tx_clone.borrow_mut().take() {
+                    let _ = tx.send(());
+                }
+            },
+        );
+        ws.set_onclose(Some(onclose.as_ref().unchecked_ref()));
+        onclose.forget();
+
+        let onerror = Closure::<dyn FnMut(web_sys::ErrorEvent)>::new(
+            move |e: web_sys::ErrorEvent| {
+                console_log(&format!("[notif-ws] error: {:?}", e.message()));
+            },
+        );
+        ws.set_onerror(Some(onerror.as_ref().unchecked_ref()));
+        onerror.forget();
+
+        // Wait for close (or abort).
+        let _ = close_rx.await;
+
+        if abort.load(Ordering::Relaxed) {
+            let _ = ws.close();
+            break;
+        }
+
+        // Server closed — backoff then retry.
+        let jitter_fraction = js_sys::Math::random();
+        let jitter_offset =
+            (backoff_ms as f64 * 0.25 * (jitter_fraction * 2.0 - 1.0)) as i64;
+        let sleep_ms = (backoff_ms as i64 + jitter_offset).max(100) as u32;
+        gloo_timers::future::TimeoutFuture::new(sleep_ms).await;
+        backoff_ms = (backoff_ms * 2).min(30_000);
+    }
+}
+
+/// Spawn the per-user notification WebSocket task (WASM implementation).
+///
+/// Opens a connection to `GET /ws/notifications`, re-seeds `unread_count` via
+/// `get_unread_count()` on every (re)connect, and applies `UnreadCountUpdated` events
+/// (count update + ~200ms increment-only badge pulse, UI-SPEC §301).
+///
+/// Returns a `WsHandle` that aborts the reconnect loop on drop (navigate-away teardown).
+/// Takes two bare `RwSignal`s — NOT `BoardSignals` — so it works on workspace/archive
+/// routes that have no board context.
+#[cfg(target_arch = "wasm32")]
+pub fn spawn_notif_task(unread_count: RwSignal<i64>, badge_pulse: RwSignal<bool>) -> WsHandle {
+    let abort = Arc::new(AtomicBool::new(false));
+    let handle = WsHandle::new(Arc::clone(&abort));
+
+    let abort_task = Arc::clone(&abort);
+    wasm_bindgen_futures::spawn_local(async move {
+        notif_reconnect_loop(unread_count, badge_pulse, abort_task).await;
+    });
+
+    handle
+}
+
+/// No-op stub for SSR and test builds.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn spawn_notif_task(_unread_count: RwSignal<i64>, _badge_pulse: RwSignal<bool>) -> WsHandle {
+    WsHandle::new(Arc::new(AtomicBool::new(false)))
+}
