@@ -16,3 +16,4 @@ pub mod today_strip;
 pub mod topbar;
 pub mod card_detail;
 pub mod reconnect_toast;
+pub mod presence_stack;

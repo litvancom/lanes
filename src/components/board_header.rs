@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use crate::models::BoardWithMeta;
 use crate::api::workspace_api::{ToggleStarBoard, ArchiveBoard};
+use crate::components::presence_stack::PresenceStack;
 
 /// Validate a board color as a 6-digit hex (`#rrggbb`).
 /// Returns a safe default rather than interpolating untrusted-shaped data
@@ -119,6 +120,10 @@ pub fn BoardHeader(
 
             // ── Spacer ───────────────────────────────────────────────────────
             <div class="lns-board-header-spacer"/>
+
+            // ── Presence avatar stack (06-04, RT-03 SC5) ─────────────────────
+            // Current viewers excluding self. Reads BoardSignals.viewers from context.
+            <PresenceStack/>
 
             // ── Inert placeholders (Phase 4 activates filter + labels) ───────
             <div class="lns-board-header-actions">

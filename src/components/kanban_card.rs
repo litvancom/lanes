@@ -371,6 +371,38 @@ pub fn KanbanCard(
 
                 </div>
             </div>
+
+            // ── Editing badge (06-04, D-10) ──────────────────────────────────
+            // Absolute overlay at bottom-left; appears when another user has this card open.
+            {
+                let card_id_for_badge = card.get_untracked().id.clone();
+                move || {
+                    if let Some(bs) = board_signals_ctx {
+                        let editors = bs.editing_card_ids.with(|m| {
+                            m.get(&card_id_for_badge).cloned().unwrap_or_default()
+                        });
+                        if !editors.is_empty() {
+                            let count = editors.len();
+                            let label = if count == 1 {
+                                "Editing".to_string()
+                            } else {
+                                format!("Editing ({count})")
+                            };
+                            return Some(view! {
+                                <div class="lns-editing-badge">
+                                    // Pencil icon (12px inline SVG)
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                    </svg>
+                                    <span>{label}</span>
+                                </div>
+                            }.into_any());
+                        }
+                    }
+                    None
+                }
+            }
         </div>
     }
 }
