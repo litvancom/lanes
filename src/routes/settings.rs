@@ -14,7 +14,9 @@ use leptos::prelude::*;
 use leptos_router::components::Redirect;
 use crate::api::auth_api::get_current_user;
 use crate::api::token_api::{create_api_token, list_api_tokens, revoke_api_token};
+use crate::api::workspace_api::{list_boards_with_meta, list_starred_boards, ToggleStarBoard};
 use crate::components::icon::Icon;
+use crate::components::sidebar::WorkspaceSidebar;
 use crate::models::{ApiTokenMeta, CreatedToken};
 
 // ---------------------------------------------------------------------------
@@ -43,6 +45,26 @@ pub fn SettingsPage() -> impl IntoView {
 
 #[component]
 fn SettingsContent() -> impl IntoView {
+    // Board resources — populate sidebar BOARDS/STARRED sections
+    let boards = Resource::new(|| (), |_| async { list_boards_with_meta().await });
+    let starred = Resource::new(|| (), |_| async { list_starred_boards().await });
+
+    // Star toggle action
+    let star_action = ServerAction::<ToggleStarBoard>::new();
+
+    // Refetch board lists on successful star toggle
+    Effect::new(move |_| {
+        if matches!(star_action.value().get(), Some(Ok(_))) {
+            boards.refetch();
+            starred.refetch();
+        }
+    });
+
+    // Star callback passed to sidebar
+    let star_cb: Callback<String> = Callback::new(move |board_id: String| {
+        star_action.dispatch(ToggleStarBoard { board_id });
+    });
+
     // Token list — refreshes after create/revoke
     let tokens_resource = Resource::new(|| (), |_| async { list_api_tokens().await });
 
@@ -68,11 +90,18 @@ fn SettingsContent() -> impl IntoView {
     });
 
     view! {
-        <div class="lns-settings-layout">
-            // --- Page header ---
-            <header class="lns-settings-header">
-                <h1 class="lns-settings-title">"Settings"</h1>
-            </header>
+        <div class="lns-app">
+            <WorkspaceSidebar
+                all_boards=Signal::derive(move || boards.get().and_then(|r| r.ok()).unwrap_or_default())
+                starred_boards=Signal::derive(move || starred.get().and_then(|r| r.ok()).unwrap_or_default())
+                on_star=star_cb
+                active="settings"
+            />
+            <div class="lns-app-main">
+                <div class="lns-topbar lns-inbox-topbar">
+                    <h1 class="lns-inbox-page-title">"Settings"</h1>
+                </div>
+                <div class="lns-settings-layout">
 
             // --- API Tokens section ---
             <section class="lns-settings-section">
@@ -256,6 +285,8 @@ fn SettingsContent() -> impl IntoView {
                     }}
                 </Suspense>
             </section>
+                </div>
+            </div>
         </div>
     }
 }
