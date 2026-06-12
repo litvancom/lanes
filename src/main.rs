@@ -114,10 +114,25 @@ async fn start_server() {
         .await
         .expect("Failed to create database pools");
 
-    // Run migrations on write pool only (Pattern 4)
+    // Run migrations on write pool only — idempotent on every boot (D-23, sqlx::migrate!).
     run_migrations(&write_pool)
         .await
         .expect("Failed to run database migrations");
+
+    // Optional demo seed: SEED_DEMO=true loads Mira's fixtures only on an empty DB (D-25).
+    // run_seed's non-empty guard returns SeedError::DatabaseNotEmpty when users already exist
+    // — treat that as a benign skip so re-runs (e.g. container restart) never panic (T-07-24).
+    if std::env::var("SEED_DEMO").as_deref() == Ok("true") {
+        match lanes::seed::run_seed(&write_pool).await {
+            Ok(()) => tracing::info!("SEED_DEMO: demo fixtures loaded"),
+            Err(lanes::seed::SeedError::DatabaseNotEmpty) => {
+                tracing::info!("SEED_DEMO: database not empty — skipping seed");
+            }
+            Err(e) => {
+                tracing::warn!("SEED_DEMO: seed error (non-fatal): {e}");
+            }
+        }
+    }
 
     // --- Session + auth middleware wiring (RESEARCH Pattern 1) ---
 
@@ -207,6 +222,8 @@ async fn start_server() {
     }
 
     let app = Router::new()
+        // Health check endpoint — responds 200 "OK"; used by Docker compose healthcheck (D-24).
+        .route("/health", axum::routing::get(|| async { "OK" }))
         // REST API routes (/api/v1/* + /api/openapi.json) — bearer token auth only (D-15/D-16).
         // Merged BEFORE .layer(auth_layer) so session middleware does NOT gate these routes
         // (Pitfall 2: bearer auth must not interfere with session-based Leptos routes).
