@@ -17,7 +17,7 @@ use crate::{
         events::BoardEvent,
         rest_dto::{CreateListReq, ListDto, PaginationParams, UpdateListReq},
     },
-    server::{rest_api::{auth::ApiUser, boards::require_member}, state::AppState},
+    server::{rest_api::{auth::ApiUser, boards::{require_member, require_member_editor}}, state::AppState},
 };
 
 // ---------------------------------------------------------------------------
@@ -114,7 +114,7 @@ pub async fn create_list(
 ) -> Response {
     use crate::api::list_api::{create_list_inner, next_list_position};
 
-    if let Err(resp) = require_member(&state.read_pool.0, &board_id, &user.id).await {
+    if let Err(resp) = require_member_editor(&state.read_pool.0, &board_id, &user.id).await {
         return resp;
     }
 
@@ -192,7 +192,7 @@ pub async fn update_list(
 ) -> Response {
     use crate::api::list_api::rename_list_inner;
 
-    if let Err(resp) = require_member(&state.read_pool.0, &board_id, &user.id).await {
+    if let Err(resp) = require_member_editor(&state.read_pool.0, &board_id, &user.id).await {
         return resp;
     }
 
@@ -282,7 +282,7 @@ pub async fn delete_list(
     ApiUser(user): ApiUser,
     Path((board_id, list_id)): Path<(String, String)>,
 ) -> Response {
-    if let Err(resp) = require_member(&state.read_pool.0, &board_id, &user.id).await {
+    if let Err(resp) = require_member_editor(&state.read_pool.0, &board_id, &user.id).await {
         return resp;
     }
 

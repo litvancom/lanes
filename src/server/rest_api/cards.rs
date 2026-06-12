@@ -17,7 +17,7 @@ use crate::{
         events::{BoardEvent, CardPatch, CardSummary},
         rest_dto::{CardDto, CreateCardReq, MoveCardReq, PaginationParams, UpdateCardReq},
     },
-    server::{rest_api::{auth::ApiUser, boards::require_member}, state::AppState},
+    server::{rest_api::{auth::ApiUser, boards::{require_member, require_member_editor}}, state::AppState},
 };
 
 // ---------------------------------------------------------------------------
@@ -112,7 +112,7 @@ pub async fn create_card(
     use crate::api::card_api::{create_card_inner, next_card_position};
     use crate::api::list_api::board_id_for_list;
 
-    if let Err(resp) = require_member(&state.read_pool.0, &board_id, &user.id).await {
+    if let Err(resp) = require_member_editor(&state.read_pool.0, &board_id, &user.id).await {
         return resp;
     }
 
@@ -237,7 +237,7 @@ pub async fn update_card(
 ) -> Response {
     use crate::api::card_detail_api::update_card_title_inner;
 
-    if let Err(resp) = require_member(&state.read_pool.0, &board_id, &user.id).await {
+    if let Err(resp) = require_member_editor(&state.read_pool.0, &board_id, &user.id).await {
         return resp;
     }
 
@@ -326,7 +326,7 @@ pub async fn move_card(
 ) -> Response {
     use crate::api::card_api::move_card_inner;
 
-    if let Err(resp) = require_member(&state.read_pool.0, &board_id, &user.id).await {
+    if let Err(resp) = require_member_editor(&state.read_pool.0, &board_id, &user.id).await {
         return resp;
     }
 
@@ -380,7 +380,7 @@ pub async fn delete_card(
 ) -> Response {
     use crate::api::card_detail_api::archive_card_inner;
 
-    if let Err(resp) = require_member(&state.read_pool.0, &board_id, &user.id).await {
+    if let Err(resp) = require_member_editor(&state.read_pool.0, &board_id, &user.id).await {
         return resp;
     }
 
