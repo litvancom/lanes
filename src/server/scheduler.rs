@@ -23,7 +23,6 @@ pub async fn scan_due_notifications_once(
     now_ms: i64,
 ) -> Result<Vec<String>, sqlx::Error> {
     use crate::api::notification_api::insert_notification_inner;
-    use crate::server::now_millis;
 
     let soon_ms = now_ms + 24 * 60 * 60 * 1000; // 24h window (D-02)
     let mut inserted_ids: Vec<String> = Vec::new();
@@ -54,7 +53,6 @@ pub async fn scan_due_notifications_once(
     for (card_id, user_id, board_id) in due_soon_rows {
         // Re-check dedup within the same tick (Pitfall 3 — sequential is sufficient).
         let notif_id = uuid::Uuid::now_v7().to_string();
-        let ts = now_millis().map_err(|_| sqlx::Error::Decode("clock error".into()))?;
 
         sqlx::query(
             "INSERT INTO notifications (id, user_id, board_id, card_id, kind, actor_id, read, created_at)
@@ -66,7 +64,9 @@ pub async fn scan_due_notifications_once(
         .bind(&card_id)
         .bind("due_soon")
         .bind(Option::<String>::None)
-        .bind(ts)
+        // Use the injected scan time so the tick is internally consistent and deterministic
+        // for tests (rather than a fresh per-row wall-clock read).
+        .bind(now_ms)
         .execute(pool)
         .await?;
 
@@ -96,7 +96,6 @@ pub async fn scan_due_notifications_once(
 
     for (card_id, user_id, board_id) in overdue_rows {
         let notif_id = uuid::Uuid::now_v7().to_string();
-        let ts = now_millis().map_err(|_| sqlx::Error::Decode("clock error".into()))?;
 
         sqlx::query(
             "INSERT INTO notifications (id, user_id, board_id, card_id, kind, actor_id, read, created_at)
@@ -108,7 +107,8 @@ pub async fn scan_due_notifications_once(
         .bind(&card_id)
         .bind("overdue")
         .bind(Option::<String>::None)
-        .bind(ts)
+        // Use the injected scan time so the tick is internally consistent and deterministic.
+        .bind(now_ms)
         .execute(pool)
         .await?;
 
