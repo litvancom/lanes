@@ -121,7 +121,11 @@ pub fn AttachmentsSection(
                     let form_data = web_sys::FormData::new().expect("FormData");
                     form_data.append_with_blob("file", &file).expect("append file");
 
-                    let upload_url = format!("/api/attachments/{}/{}", bid, cid);
+                    // D-05: extract own_client_id synchronously BEFORE spawn_local (sync read from untracked signal)
+                    let cid_val = board_signals
+                        .and_then(|bs| bs.own_client_id.get_untracked())
+                        .unwrap_or_default();
+                    let upload_url = format!("/api/attachments/{}/{}?client_id={}", bid, cid, cid_val);
 
                     // Spawn async fetch task
                     let error_sig = upload_error;

@@ -11,11 +11,21 @@
 #[cfg(feature = "ssr")]
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
+
+/// Query parameters for the upload endpoint.
+///
+/// `client_id` is the originator's WS client UUID (D-05 echo suppression).
+/// It is NEVER stored in the DB or used in authorization — opaque tag only.
+#[cfg(feature = "ssr")]
+#[derive(serde::Deserialize)]
+pub struct UploadQuery {
+    client_id: Option<String>,
+}
 #[cfg(feature = "ssr")]
 use crate::auth::helpers::AuthSession;
 #[cfg(feature = "ssr")]
@@ -38,12 +48,17 @@ use crate::server::state::AppState;
 pub async fn upload_attachment_handler(
     State(state): State<AppState>,
     Path((board_id, card_id)): Path<(String, String)>,
+    Query(query): Query<UploadQuery>,
     auth_session: AuthSession,
     mut multipart: axum::extract::Multipart,
 ) -> Response {
     use uuid::Uuid;
     use object_store::{ObjectStore, ObjectStoreExt, path::Path as StorePath};
     use crate::api::card_detail_api::record_attachment_inner;
+    use crate::models::events::BoardEvent;
+
+    // D-05: extract originator client_id from query param (untrusted; never stored in DB or used in authz — T-6-03)
+    let client_id = query.client_id.unwrap_or_default();
 
     // 1. Require authenticated user (T-05-20)
     let user = match auth_session.user {
@@ -191,7 +206,20 @@ pub async fn upload_attachment_handler(
     )
     .await
     {
-        Ok(attachment) => (StatusCode::CREATED, Json(attachment)).into_response(),
+        Ok(attachment) => {
+            // CR-04: publish_seq allocates seq and sends atomically.
+            // D-05: stamp client_id so the originator's WASM client can suppress its own echo.
+            state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::AttachmentAdded {
+                board_seq: seq,
+                client_id: client_id.clone(),
+                card_id: card_id.clone(),
+                attachment_id: attachment.id.clone(),
+                filename: attachment.filename.clone(),
+                url: attachment.url.clone(),
+                size_bytes: attachment.size_bytes,
+            });
+            (StatusCode::CREATED, Json(attachment)).into_response()
+        }
         Err(e) => {
             tracing::error!("upload_attachment record_attachment_inner error: {e}");
             // Best-effort cleanup of the stored object (ignore errors — orphan is non-critical)
