@@ -22,6 +22,10 @@ use crate::components::board_card::safe_hex;
 /// RT-04: Inbox nav item now carries a live `.lns-sidebar-badge` driven by `unread_count`.
 /// The route is still inert (Phase 7 wires /inbox); the badge is live now (UI-SPEC §7).
 ///
+/// `active` prop: selects which nav item gets `lns-sidebar-item--active`.
+/// - "boards" (default): Boards nav link active (/, /inbox, /calendar, /archive)
+/// - "settings": Settings footer link active (/settings)
+///
 /// Threat mitigations:
 /// - T-03-22: board names escaped by Leptos view! (no inner_html)
 /// - T-03-23: board colors validated by safe_hex() before CSS interpolation
@@ -40,6 +44,9 @@ pub fn WorkspaceSidebar(
     /// True for ~200ms when unread_count increments — triggers CSS pulse (UI-SPEC §301).
     #[prop(default = RwSignal::new(false))]
     badge_pulse: RwSignal<bool>,
+    /// Which nav item is active. "boards" (default) or "settings".
+    #[prop(default = "boards")]
+    active: &'static str,
 ) -> impl IntoView {
     view! {
         <aside class="lns-sidebar">
@@ -50,8 +57,8 @@ pub fn WorkspaceSidebar(
 
             // --- Nav items ---
             <nav class="lns-sidebar-nav">
-                // Boards (active on /)
-                <a href="/" class="lns-sidebar-item lns-sidebar-item--active">
+                // Boards (active when active == "boards")
+                <a href="/" class=move || if active == "boards" { "lns-sidebar-item lns-sidebar-item--active" } else { "lns-sidebar-item" }>
                     <Icon name="grid"/>
                     <span>"Boards"</span>
                 </a>
@@ -154,7 +161,7 @@ pub fn WorkspaceSidebar(
 
             // --- Bottom: settings link + invite teammate ---
             <div class="lns-sidebar-footer">
-                <a href="/settings" class="lns-sidebar-item lns-sidebar-settings-link">
+                <a href="/settings" class=move || if active == "settings" { "lns-sidebar-item lns-sidebar-settings-link lns-sidebar-item--active" } else { "lns-sidebar-item lns-sidebar-settings-link" }>
                     <Icon name="settings"/>
                     <span>"Settings"</span>
                 </a>
