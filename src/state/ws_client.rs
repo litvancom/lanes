@@ -469,26 +469,27 @@ fn apply_presence_event(signals: BoardSignals, event: PresenceEvent, _own_client
             });
         }
         PresenceEvent::ViewerLeft { user_id } => {
+            // CR-03: resolve the departing user's display_name BEFORE removing them from
+            // the viewers list, then retain only that name from editing/typing maps.
+            // Previously `retain(|_| false)` wiped every user's state.
+            let gone_name = signals.viewers.with_untracked(|vs| {
+                vs.iter().find(|v| v.user_id == user_id).map(|v| v.display_name.clone())
+            });
             // Remove from viewers list (idempotent — no-op if absent).
             signals.viewers.update(|vs| {
                 vs.retain(|v| v.user_id != user_id);
             });
-            // Also clear editing/typing for this viewer.
-            signals.editing_card_ids.update(|m| {
-                m.values_mut().for_each(|names| names.retain(|_| false));
-                m.retain(|_, v| !v.is_empty());
-            });
-            signals.typing_card_ids.update(|m| {
-                m.values_mut().for_each(|names| names.retain(|_| false));
-                m.retain(|_, v| !v.is_empty());
-            });
-            // More precise: remove this user's display_name from all editing/typing maps.
-            // We don't have display_name here, only user_id. So we need to look up the name.
-            // Since the viewer is already being removed from `viewers`, snapshot first.
-            // Actually, we should do the removal BEFORE `viewers.update()` above.
-            // This is fine for now: the card detail components will see the viewer gone from
-            // the viewers list, and editing/typing signals will be cleared on the next EditingCard
-            // or Typing event with is_typing:false. The 15s heartbeat sweep handles ghosts.
+            // Clear only the departing user's editing/typing indicators.
+            if let Some(name) = gone_name {
+                signals.editing_card_ids.update(|m| {
+                    for names in m.values_mut() { names.retain(|n| n != &name); }
+                    m.retain(|_, v| !v.is_empty());
+                });
+                signals.typing_card_ids.update(|m| {
+                    for names in m.values_mut() { names.retain(|n| n != &name); }
+                    m.retain(|_, v| !v.is_empty());
+                });
+            }
         }
         PresenceEvent::EditingCard { user_id, card_id } => {
             // Look up display_name for this user_id from the viewers list.
