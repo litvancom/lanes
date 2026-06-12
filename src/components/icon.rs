@@ -99,6 +99,12 @@ pub fn Icon(
         // Move-to arrow — for move action
         "moveTo" => r#"<path d="M2 8h12M9 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>"#,
 
+        // Single user / person — for assigned notifications
+        "user" => r#"<circle cx="8" cy="5.5" r="3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 14.5c0-3 2.5-5 6-5s6 2 6 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>"#,
+
+        // Sparkle (4-point star) — for inbox empty state
+        "sparkle" => r#"<path d="M8 1.5L9.2 6.8 14.5 8 9.2 9.2 8 14.5 6.8 9.2 1.5 8 6.8 6.8 8 1.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>"#,
+
         // Unknown glyph — transparent placeholder (same dimensions)
         _ => "",
     };

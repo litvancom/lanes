@@ -3042,3 +3042,279 @@ input, textarea {
 .lns-sidebar-badge--pulse {
   animation: lns-badge-pulse 200ms ease;
 }
+
+/* ==========================================================================
+   Inbox page (Phase 7 — INBOX-01, INBOX-02)
+   ========================================================================== */
+
+/* Page wrapper: fills the main area with a flex column */
+.lns-inbox {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  overflow-y: auto;
+  padding: 0 0 32px 0;
+}
+
+/* Inline topbar for inbox (no board context) */
+.lns-inbox-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  height: 56px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  flex-shrink: 0;
+}
+
+.lns-inbox-page-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.015em;
+  margin: 0;
+}
+
+/* Time bucket group */
+.lns-inbox-bucket {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Bucket label: 11px / 600 / uppercase / --text-muted — matches .lns-sidebar h3 */
+.lns-inbox-bucket-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  padding: 16px 20px 6px 20px;
+}
+
+/* List of rows inside a bucket */
+.lns-inbox-list {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Single notification row */
+.lns-inbox-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px 12px 20px;
+  min-height: 56px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.lns-inbox-row:hover {
+  background: var(--bg-hover);
+}
+
+/* Unread row: accent tint + left border */
+.lns-inbox-row--unread {
+  background: var(--accent-soft);
+  border-left: 2px solid var(--accent);
+}
+
+.lns-inbox-row--unread .lns-inbox-row-summary {
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* Read row: dimmed */
+.lns-inbox-row--read {
+  background: var(--bg-elevated);
+  border-left: 2px solid transparent;
+}
+
+.lns-inbox-row--read .lns-inbox-row-summary {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+/* Unread dot — 8px circle at left edge */
+.lns-inbox-row-dot {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  left: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+/* Kind icon tile — 32px circle */
+.lns-inbox-row-icon {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.lns-inbox-row-icon--mention {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.lns-inbox-row-icon--assigned {
+  background: oklch(94% 0.02 150);
+  color: var(--success);
+}
+
+.lns-inbox-row-icon--due-soon {
+  background: #fdf4e3;
+  color: var(--warning);
+}
+
+.lns-inbox-row-icon--overdue {
+  background: #fde9e7;
+  color: var(--danger);
+}
+
+.lns-inbox-row-icon--watch {
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+}
+
+/* Row body: flex column, takes remaining space */
+.lns-inbox-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Summary line: one line, ellipsis */
+.lns-inbox-row-summary {
+  font-size: 13px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Meta line: board name + relative time */
+.lns-inbox-row-meta {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-faint);
+  line-height: 1.0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Per-row action area: shown only on hover */
+.lns-inbox-row-actions {
+  display: flex;
+  align-items: center;
+  opacity: 0;
+  transition: opacity 0.12s;
+  flex-shrink: 0;
+}
+
+.lns-inbox-row:hover .lns-inbox-row-actions {
+  opacity: 1;
+}
+
+/* Read toggle button */
+.lns-inbox-row-toggle {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  padding: 0;
+  transition: color 0.12s;
+}
+
+.lns-inbox-row-toggle:hover {
+  color: var(--accent-text);
+}
+
+/* Loading skeletons */
+.lns-inbox-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.lns-inbox-skeleton {
+  height: 56px;
+  background: linear-gradient(90deg, var(--bg-subtle) 25%, var(--bg-elevated) 50%, var(--bg-subtle) 75%);
+  background-size: 200% 100%;
+  animation: lns-skeleton-shimmer 1.2s infinite;
+  border-bottom: 1px solid var(--border);
+}
+
+@keyframes lns-skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Error state */
+.lns-inbox-error {
+  padding: 24px 20px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Empty state (D-09) */
+.lns-inbox-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 64px 24px;
+  text-align: center;
+  flex: 1;
+}
+
+.lns-inbox-empty-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-text);
+  margin-bottom: 16px;
+}
+
+.lns-inbox-empty-heading {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.015em;
+  margin: 0 0 8px 0;
+}
+
+.lns-inbox-empty-body {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-muted);
+  max-width: 280px;
+  line-height: 1.45;
+  margin: 0;
+}
