@@ -27,7 +27,7 @@ use {
 };
 
 // ---------------------------------------------------------------------------
-// RateLimiter — in-memory per-token sliding window (D-21 / T-07-17)
+// RateLimiter — in-memory per-token fixed window (D-21 / T-07-17)
 // ---------------------------------------------------------------------------
 
 /// Per-token request bucket (120 req / 60 s window).
@@ -40,7 +40,14 @@ pub struct RateBucket {
 /// In-memory per-token rate limiter held as a field on `AppState`.
 ///
 /// Cloning is cheap — the inner `Arc<Mutex<HashMap>>` is reference-counted.
-/// Rate limit: 120 requests per 60-second sliding window per token.
+/// Rate limit: 120 requests per 60-second **fixed** window per token.
+///
+/// Note: this is a fixed window, not a sliding window — the counter resets when the
+/// window boundary elapses, so up to ~2x `LIMIT` requests can pass across a single
+/// boundary. This is an accepted trade-off for D-21's coarse abuse-protection goal.
+///
+/// Memory: stale buckets are reclaimed opportunistically inside `check()` (any bucket
+/// whose window has fully elapsed is dropped), so rotated/expired tokens do not leak.
 #[cfg(feature = "ssr")]
 #[derive(Clone, Default)]
 pub struct RateLimiter(pub Arc<Mutex<HashMap<String, RateBucket>>>);
@@ -57,6 +64,11 @@ impl RateLimiter {
     pub fn check(&self, token_id: &str) -> bool {
         let mut map = self.0.lock().unwrap();
         let now = Instant::now();
+
+        // Opportunistic pruning: drop buckets whose window has fully elapsed so the map
+        // does not grow unbounded as tokens are rotated/retired (prevents the memory leak).
+        map.retain(|_, b| now <= b.reset_at);
+
         let bucket = map
             .entry(token_id.to_string())
             .or_insert_with(|| RateBucket {
