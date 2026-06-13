@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, board_id, email, expires_at, accepted FROM invites WHERE token = ?",
+  "query": "SELECT id, board_id, email, role, expires_at, accepted FROM invites WHERE token = ?",
   "describe": {
     "columns": [
       {
@@ -19,13 +19,18 @@
         "type_info": "Text"
       },
       {
-        "name": "expires_at",
+        "name": "role",
         "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "expires_at",
+        "ordinal": 4,
         "type_info": "Integer"
       },
       {
         "name": "accepted",
-        "ordinal": 4,
+        "ordinal": 5,
         "type_info": "Integer"
       }
     ],
@@ -37,8 +42,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "355a4ba30cb0bd9a329f77d596f5a72e3ab724f5feee78b58b26a736f1043306"
+  "hash": "9a52d0816f576c7425467d651da5a3a2017d11534b610a7c33dc64fa93acc8dc"
 }

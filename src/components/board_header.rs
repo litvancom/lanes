@@ -19,7 +19,8 @@ fn safe_hex(c: &str) -> &str {
 /// - Breadcrumb "Boards ›" (link to /)
 /// - Board title (17px/700) with a 14×14px solid color chip (radius 4px, T-03-17)
 /// - Star toggle button (optimistic local state, dispatches ToggleStarBoard)
-/// - Inert placeholders: Share, filter, labels toggle
+/// - Owner-only Share button that opens the ShareModal
+/// - Filter search input and labels toggle
 /// - Overflow menu with Archive action (inline-confirm pattern, UI-SPEC §Archive Confirmation)
 ///
 /// Threat mitigations:
@@ -33,6 +34,9 @@ pub fn BoardHeader(
     search: RwSignal<String>,
     /// Label expand/collapse signal from BoardSignals (CARD-06)
     labels_expanded: RwSignal<bool>,
+    /// True when the current viewer holds the owner role on this board.
+    /// Controls visibility of the Share button (owner-only per UI-SPEC §Sharing).
+    is_owner: bool,
 ) -> impl IntoView {
     // Validate the board color defensively (T-03-17)
     let validated_color = safe_hex(&board.color).to_string();
@@ -42,6 +46,11 @@ pub fn BoardHeader(
 
     // Star server action
     let star_action = ServerAction::<ToggleStarBoard>::new();
+
+    // Share modal open/close state (owner-only)
+    let show_share = RwSignal::new(false);
+    // board_id for the share modal — cloned before other board.id clones consume board
+    let board_id_for_modal = board.id.clone();
 
     // Optimistically flip the star on dispatch; the server fn persists it
     let board_id_for_star = board.id.clone();
@@ -125,12 +134,18 @@ pub fn BoardHeader(
             // Current viewers excluding self. Reads BoardSignals.viewers from context.
             <PresenceStack/>
 
-            // ── Inert placeholders (Phase 4 activates filter + labels) ───────
+            // ── Actions row ────────────────────────────────────────────────
             <div class="lns-board-header-actions">
-                // Share button (inert Phase 3)
-                <button type="button" class="lns-btn lns-btn--ghost" disabled=true>
-                    "Share"
-                </button>
+                // Share button — owner only; opens ShareModal
+                {is_owner.then(|| view! {
+                    <button
+                        type="button"
+                        class="lns-btn lns-btn--ghost"
+                        on:click=move |_| show_share.set(true)
+                    >
+                        "Share"
+                    </button>
+                })}
 
                 // Filter search input (Phase 4 activated — CARD-05)
                 <div class="lns-search">
@@ -243,6 +258,12 @@ pub fn BoardHeader(
                     </Show>
                 </div>
             </div>
+
+            // Share modal — mounted once; controlled by show_share signal (owner-only)
+            <crate::components::share_modal::ShareModal
+                board_id=board_id_for_modal
+                show=show_share
+            />
         </header>
     }
 }

@@ -623,3 +623,155 @@ mod token_tests {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Role-based REST authorization tests (Task 6 — board-sharing access levels)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "ssr")]
+mod role_tests {
+    use lanes::server::db::{init_pools, run_migrations};
+    use lanes::server::rest_api::boards::{require_member, require_member_commenter, require_member_editor};
+    use lanes::api::workspace_api::derive_key_prefix;
+    use tempfile::NamedTempFile;
+
+    async fn test_db() -> (NamedTempFile, sqlx::SqlitePool) {
+        let file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_str().expect("path").to_string();
+        let url = format!("sqlite://{}", path);
+        let (write_pool, _read_pool) = init_pools(&url).await.expect("init pools");
+        run_migrations(&write_pool).await.expect("migrations");
+        (file, write_pool)
+    }
+
+    async fn insert_user(pool: &sqlx::SqlitePool, email: &str) -> String {
+        use uuid::Uuid;
+        let id = Uuid::now_v7().to_string();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        sqlx::query!(
+            r#"INSERT INTO users (id, email, display_name, avatar_color, auth_provider, created_at)
+               VALUES (?, ?, ?, '#7c5cff', 'password', ?)"#,
+            id, email, email, now
+        )
+        .execute(pool)
+        .await
+        .expect("insert user");
+        id
+    }
+
+    async fn insert_board(pool: &sqlx::SqlitePool, name: &str, owner_id: &str) -> String {
+        use uuid::Uuid;
+        let id = Uuid::now_v7().to_string();
+        let kp = derive_key_prefix(name);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        sqlx::query!(
+            "INSERT INTO boards (id, name, key_prefix, color, starred, archived, created_at, updated_at)
+             VALUES (?, ?, ?, '#7c5cff', 0, 0, ?, ?)",
+            id, name, kp, now, now
+        )
+        .execute(pool)
+        .await
+        .expect("insert board");
+        sqlx::query!(
+            "INSERT INTO board_members (board_id, user_id, role) VALUES (?, ?, 'owner')",
+            id, owner_id
+        )
+        .execute(pool)
+        .await
+        .expect("insert owner member");
+        id
+    }
+
+    async fn add_member(pool: &sqlx::SqlitePool, board_id: &str, user_id: &str, role: &str) {
+        sqlx::query!(
+            "INSERT INTO board_members (board_id, user_id, role) VALUES (?, ?, ?)",
+            board_id, user_id, role
+        )
+        .execute(pool)
+        .await
+        .expect("add member");
+    }
+
+    /// A viewer member is blocked by `require_member_editor` with 403 (read-only access),
+    /// but passes `require_member` (still a board member — can read).
+    /// Mirrors what the PATCH card handler enforces: viewer → 403, GET board → 200.
+    #[tokio::test]
+    async fn rest_viewer_cannot_edit_card() {
+        let (_file, pool) = test_db().await;
+
+        let owner = insert_user(&pool, "owner@test.com").await;
+        let viewer = insert_user(&pool, "viewer@test.com").await;
+        let board_id = insert_board(&pool, "Test Board", &owner).await;
+        add_member(&pool, &board_id, &viewer, "viewer").await;
+
+        // PATCH (mutation) path: require_member_editor must reject viewer with 403.
+        let edit_result = require_member_editor(&pool, &board_id, &viewer).await;
+        assert!(edit_result.is_err(), "viewer must be blocked from mutations");
+        let response = edit_result.unwrap_err();
+        use axum::response::IntoResponse;
+        let (parts, _body) = response.into_response().into_parts();
+        assert_eq!(
+            parts.status,
+            axum::http::StatusCode::FORBIDDEN,
+            "viewer must receive 403 on mutation attempt"
+        );
+
+        // GET (read) path: require_member must still admit the viewer (they are a member).
+        let read_result = require_member(&pool, &board_id, &viewer).await;
+        assert!(read_result.is_ok(), "viewer must still be able to read the board");
+        assert_eq!(read_result.unwrap(), "viewer");
+    }
+
+    /// A viewer cannot comment (`require_member_commenter` → 403);
+    /// a commenter (or higher) is admitted.
+    #[tokio::test]
+    async fn rest_viewer_cannot_comment() {
+        let (_file, pool) = test_db().await;
+
+        let owner = insert_user(&pool, "owner3@test.com").await;
+        let viewer = insert_user(&pool, "viewer3@test.com").await;
+        let board_id = insert_board(&pool, "Comment Gate Board", &owner).await;
+        add_member(&pool, &board_id, &viewer, "viewer").await;
+
+        // Viewer must be rejected with 403.
+        let viewer_result = require_member_commenter(&pool, &board_id, &viewer).await;
+        assert!(viewer_result.is_err(), "viewer must be blocked from commenting");
+        let response = viewer_result.unwrap_err();
+        use axum::response::IntoResponse;
+        let (parts, _body) = response.into_response().into_parts();
+        assert_eq!(
+            parts.status,
+            axum::http::StatusCode::FORBIDDEN,
+            "viewer must receive 403 on comment attempt"
+        );
+
+        // Commenter must be admitted.
+        let commenter = insert_user(&pool, "commenter3@test.com").await;
+        add_member(&pool, &board_id, &commenter, "commenter").await;
+        let commenter_result = require_member_commenter(&pool, &board_id, &commenter).await;
+        assert!(commenter_result.is_ok(), "commenter must be allowed to comment");
+        assert_eq!(commenter_result.unwrap(), "commenter");
+    }
+
+    /// An editor member is allowed through `require_member_editor` (200-equivalent: Ok).
+    #[tokio::test]
+    async fn rest_editor_can_edit_card() {
+        let (_file, pool) = test_db().await;
+
+        let owner = insert_user(&pool, "owner2@test.com").await;
+        let editor = insert_user(&pool, "editor@test.com").await;
+        let board_id = insert_board(&pool, "Editor Board", &owner).await;
+        add_member(&pool, &board_id, &editor, "editor").await;
+
+        // PATCH (mutation) path: require_member_editor must admit the editor.
+        let result = require_member_editor(&pool, &board_id, &editor).await;
+        assert!(result.is_ok(), "editor must be allowed to mutate");
+        assert_eq!(result.unwrap(), "editor");
+    }
+}

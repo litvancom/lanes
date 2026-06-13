@@ -524,12 +524,12 @@ pub async fn toggle_checklist_item(
     done: bool,
     client_id: String,
 ) -> Result<(bool, i64, i64), ServerFnError> {
-    use crate::auth::helpers::require_board_member;
+    use crate::auth::helpers::require_board_editor;
     use crate::server::state::AppState;
     use crate::models::events::BoardEvent;
 
     let state = expect_context::<AppState>();
-    require_board_member(&board_id, &state.read_pool.0).await?;
+    require_board_editor(&board_id, &state.read_pool.0).await?;
 
     let result = toggle_checklist_item_inner(&state.write_pool.0, &board_id, &card_id, &item_id, done)
         .await
@@ -562,12 +562,12 @@ pub async fn add_checklist_item(
     text: String,
     client_id: String,
 ) -> Result<(crate::models::ChecklistItem, i64, i64), ServerFnError> {
-    use crate::auth::helpers::require_board_member;
+    use crate::auth::helpers::require_board_editor;
     use crate::server::state::AppState;
     use crate::models::events::BoardEvent;
 
     let state = expect_context::<AppState>();
-    require_board_member(&board_id, &state.read_pool.0).await?;
+    require_board_editor(&board_id, &state.read_pool.0).await?;
 
     let result = add_checklist_item_inner(&state.write_pool.0, &board_id, &card_id, text)
         .await
@@ -806,11 +806,11 @@ pub async fn assign_label(
     assigned: bool,
     client_id: String,
 ) -> Result<(), ServerFnError> {
-    use crate::auth::helpers::require_board_member;
+    use crate::auth::helpers::require_board_editor;
     use crate::server::state::AppState;
     use crate::models::{events::BoardEvent, CardLabel};
     let state = expect_context::<AppState>();
-    require_board_member(&board_id, &state.read_pool.0).await?;
+    require_board_editor(&board_id, &state.read_pool.0).await?;
     assign_label_inner(&state.write_pool.0, &board_id, &card_id, &label_id, assigned)
         .await
         .map_err(|e| {
@@ -851,11 +851,11 @@ pub async fn set_due_date(
     due_at: Option<i64>,
     client_id: String,
 ) -> Result<(), ServerFnError> {
-    use crate::auth::helpers::require_board_member;
+    use crate::auth::helpers::require_board_editor;
     use crate::server::state::AppState;
     use crate::models::events::BoardEvent;
     let state = expect_context::<AppState>();
-    require_board_member(&board_id, &state.read_pool.0).await?;
+    require_board_editor(&board_id, &state.read_pool.0).await?;
     set_due_date_inner(&state.write_pool.0, &board_id, &card_id, due_at)
         .await
         .map_err(|e| {
@@ -881,11 +881,11 @@ pub async fn set_priority(
     priority: Option<String>,
     client_id: String,
 ) -> Result<(), ServerFnError> {
-    use crate::auth::helpers::require_board_member;
+    use crate::auth::helpers::require_board_editor;
     use crate::server::state::AppState;
     use crate::models::events::BoardEvent;
     let state = expect_context::<AppState>();
-    require_board_member(&board_id, &state.read_pool.0).await?;
+    require_board_editor(&board_id, &state.read_pool.0).await?;
     set_priority_inner(&state.write_pool.0, &board_id, &card_id, priority.clone())
         .await
         .map_err(|e| {
@@ -911,12 +911,12 @@ pub async fn assign_member(
     user_id: String,
     client_id: String,
 ) -> Result<(), ServerFnError> {
-    use crate::auth::helpers::require_board_member;
+    use crate::auth::helpers::require_board_editor;
     use crate::server::state::AppState;
     use crate::models::events::{BoardEvent, NotifEvent};
     use crate::api::notification_api::insert_notification_inner;
     let state = expect_context::<AppState>();
-    let (actor, _role) = require_board_member(&board_id, &state.read_pool.0).await?;
+    let actor = require_board_editor(&board_id, &state.read_pool.0).await?;
     assign_member_inner(&state.write_pool.0, &board_id, &card_id, &user_id)
         .await
         .map_err(|e| {
@@ -977,11 +977,11 @@ pub async fn remove_member(
     user_id: String,
     client_id: String,
 ) -> Result<(), ServerFnError> {
-    use crate::auth::helpers::require_board_member;
+    use crate::auth::helpers::require_board_editor;
     use crate::server::state::AppState;
     use crate::models::events::{BoardEvent, NotifEvent};
     let state = expect_context::<AppState>();
-    let (actor, _role) = require_board_member(&board_id, &state.read_pool.0).await?;
+    let actor = require_board_editor(&board_id, &state.read_pool.0).await?;
     remove_member_inner(&state.write_pool.0, &board_id, &card_id, &user_id)
         .await
         .map_err(|e| {
@@ -1110,13 +1110,13 @@ pub async fn update_card_title(
     title: String,
     client_id: String,
 ) -> Result<String, ServerFnError> {
-    use crate::auth::helpers::require_board_member;
+    use crate::auth::helpers::require_board_editor;
     use crate::server::state::AppState;
     use crate::models::events::{BoardEvent, CardPatch};
 
     let state = expect_context::<AppState>();
 
-    require_board_member(&board_id, &state.read_pool.0).await?;
+    require_board_editor(&board_id, &state.read_pool.0).await?;
 
     let saved_title = update_card_title_inner(&state.write_pool.0, &board_id, &card_id, title)
         .await
@@ -1158,13 +1158,13 @@ pub async fn update_card_description(
     description: String,
     client_id: String,
 ) -> Result<String, ServerFnError> {
-    use crate::auth::helpers::require_board_member;
+    use crate::auth::helpers::require_board_editor;
     use crate::server::state::AppState;
     use crate::models::events::{BoardEvent, CardPatch};
 
     let state = expect_context::<AppState>();
 
-    require_board_member(&board_id, &state.read_pool.0).await?;
+    require_board_editor(&board_id, &state.read_pool.0).await?;
 
     update_card_description_inner(&state.write_pool.0, &board_id, &card_id, description.clone())
         .await
@@ -1384,12 +1384,12 @@ pub async fn add_comment(
     mention_user_ids: Vec<String>,
     client_id: String,
 ) -> Result<crate::models::ActivityEntry, ServerFnError> {
-    use crate::auth::helpers::require_board_member;
+    use crate::auth::helpers::require_board_commenter;
     use crate::server::state::AppState;
     use crate::models::events::{BoardEvent, NotifEvent};
 
     let state = expect_context::<AppState>();
-    let (user, _role) = require_board_member(&board_id, &state.read_pool.0).await?;
+    let user = require_board_commenter(&board_id, &state.read_pool.0).await?;
 
     // Fetch the card title for the MentionReceived payload (best-effort; ok if missing).
     let card_title: String = sqlx::query_scalar("SELECT title FROM cards WHERE id = ?")
@@ -1742,13 +1742,13 @@ pub async fn move_card_cross_board(
     new_position: String,
     client_id: String,
 ) -> Result<i64, ServerFnError> {
-    use crate::auth::helpers::require_board_member;
+    use crate::auth::helpers::require_board_editor;
     use crate::server::state::AppState;
     use crate::models::events::BoardEvent;
     let state = expect_context::<AppState>();
-    // Must be member of BOTH boards (T-05-23)
-    require_board_member(&from_board_id, &state.read_pool.0).await?;
-    require_board_member(&to_board_id, &state.read_pool.0).await?;
+    // Must be editor of BOTH boards (T-05-23)
+    require_board_editor(&from_board_id, &state.read_pool.0).await?;
+    require_board_editor(&to_board_id, &state.read_pool.0).await?;
     let new_card_num = move_card_cross_board_inner(
         &state.write_pool.0,
         &from_board_id,
@@ -1809,11 +1809,11 @@ pub async fn archive_card(
     card_id: String,
     client_id: String,
 ) -> Result<(), ServerFnError> {
-    use crate::auth::helpers::require_board_member;
+    use crate::auth::helpers::require_board_editor;
     use crate::server::state::AppState;
     use crate::models::events::{BoardEvent, NotifEvent};
     let state = expect_context::<AppState>();
-    let (actor, _role) = require_board_member(&board_id, &state.read_pool.0).await?;
+    let actor = require_board_editor(&board_id, &state.read_pool.0).await?;
     archive_card_inner(&state.write_pool.0, &board_id, &card_id)
         .await
         .map_err(|e| {

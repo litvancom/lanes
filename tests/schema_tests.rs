@@ -345,4 +345,35 @@ mod schema_tests {
             "cards.cover must exist exactly once (from 001_init.sql, not duplicated by 004)"
         );
     }
+
+    /// Migration 007: invites.role column exists, and no board_members row carries the
+    /// legacy 'member' role any more (renamed to 'editor').
+    #[tokio::test]
+    async fn migration_007_renames_member_and_adds_invite_role() {
+        let (_file, pool) = migrated_pool().await;
+
+        // 1. invites table must have a `role` column after migration 007.
+        let invite_cols = sqlx::query("SELECT name FROM pragma_table_info('invites')")
+            .fetch_all(&pool)
+            .await
+            .expect("pragma invites");
+        let invite_col_names: Vec<String> =
+            invite_cols.iter().map(|r| r.get::<String, _>(0)).collect();
+        assert!(
+            invite_col_names.contains(&"role".to_string()),
+            "invites.role must exist after migration 007; found: {:?}",
+            invite_col_names
+        );
+
+        // 2. No board_members row should retain the legacy 'member' role.
+        let legacy_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM board_members WHERE role = 'member'")
+                .fetch_one(&pool)
+                .await
+                .expect("count legacy members");
+        assert_eq!(
+            legacy_count, 0,
+            "No board_members row must carry role='member' after migration 007 renames it to 'editor'"
+        );
+    }
 }

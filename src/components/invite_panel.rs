@@ -43,8 +43,6 @@ pub fn InvitePanel(
 
     view! {
         <div class="lns-invite-panel">
-            <h2 class="lns-invite-panel-heading">"Invite to board"</h2>
-
             // Error banner — shown when action returns Err (e.g. owner-only rejection)
             <ErrorBanner message=error_message />
 
@@ -59,6 +57,12 @@ pub fn InvitePanel(
                     autocomplete="email"
                     placeholder="colleague@example.com"
                 />
+                <label class="lns-field-label" for="invite-role">"Access level"</label>
+                <select id="invite-role" name="role" class="lns-select">
+                    <option value="editor" selected=true>"Can edit"</option>
+                    <option value="commenter">"Read + comment"</option>
+                    <option value="viewer">"Read-only"</option>
+                </select>
                 <button
                     type="submit"
                     class="lns-btn lns-btn--primary lns-btn--full"

@@ -90,11 +90,19 @@ pub async fn upload_attachment_handler(
         }
     };
 
+    // D-12: non-members get a 404 (no existence leak); read-only members get a 403.
+    use crate::auth::role::Role;
+    let can_edit = matches!(is_member.as_deref().and_then(Role::parse), Some(r) if r.can_edit());
     if is_member.is_none() {
-        // D-12: generic error — does not reveal board existence to non-members
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "board not found"})),
+        ).into_response();
+    }
+    if !can_edit {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "read-only access"})),
         ).into_response();
     }
 

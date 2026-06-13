@@ -1,4 +1,5 @@
 pub mod models;
+pub mod role;
 
 #[cfg(feature = "ssr")]
 pub mod backend;

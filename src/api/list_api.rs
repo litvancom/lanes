@@ -150,14 +150,14 @@ pub async fn reorder_list_inner(
 /// `client_id`: opaque per-connection UUID for D-05 self-echo suppression (T-6-03).
 #[server]
 pub async fn create_list(board_id: String, name: String, client_id: String) -> Result<List, ServerFnError> {
-    use crate::auth::helpers::require_board_member;
+    use crate::auth::helpers::require_board_editor;
     use crate::server::state::AppState;
     use crate::models::events::BoardEvent;
 
     let state = expect_context::<AppState>();
 
-    // Auth + membership gate first (T-03-07)
-    require_board_member(&board_id, &state.read_pool.0).await?;
+    // Auth + editor-role gate first (T-03-07)
+    require_board_editor(&board_id, &state.read_pool.0).await?;
 
     // Validate name before computing position (fail fast)
     let name = name.trim().to_string();
@@ -198,7 +198,7 @@ pub async fn create_list(board_id: String, name: String, client_id: String) -> R
 /// `client_id`: opaque per-connection UUID for D-05 self-echo suppression (T-6-03).
 #[server]
 pub async fn rename_list(list_id: String, name: String, client_id: String) -> Result<(), ServerFnError> {
-    use crate::auth::helpers::require_board_member;
+    use crate::auth::helpers::require_board_editor;
     use crate::server::state::AppState;
     use crate::models::events::BoardEvent;
 
@@ -212,8 +212,8 @@ pub async fn rename_list(list_id: String, name: String, client_id: String) -> Re
         })?
         .ok_or_else(|| ServerFnError::new("list not found"))?;
 
-    // Auth + membership gate (T-03-07)
-    require_board_member(&board_id, &state.read_pool.0).await?;
+    // Auth + editor-role gate (T-03-07)
+    require_board_editor(&board_id, &state.read_pool.0).await?;
 
     // Validate name (fail fast before write)
     let name = name.trim().to_string();
@@ -247,7 +247,7 @@ pub async fn rename_list(list_id: String, name: String, client_id: String) -> Re
 /// `client_id`: opaque per-connection UUID for D-05 self-echo suppression (T-6-03).
 #[server]
 pub async fn reorder_list(list_id: String, new_position: String, client_id: String) -> Result<(), ServerFnError> {
-    use crate::auth::helpers::require_board_member;
+    use crate::auth::helpers::require_board_editor;
     use crate::server::state::AppState;
     use crate::models::events::BoardEvent;
 
@@ -261,8 +261,8 @@ pub async fn reorder_list(list_id: String, new_position: String, client_id: Stri
         })?
         .ok_or_else(|| ServerFnError::new("list not found"))?;
 
-    // Auth + membership gate (T-03-07)
-    require_board_member(&board_id, &state.read_pool.0).await?;
+    // Auth + editor-role gate (T-03-07)
+    require_board_editor(&board_id, &state.read_pool.0).await?;
 
     // Validate position string (T-03-08): reject undecodable fractional index
     {

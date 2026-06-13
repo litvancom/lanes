@@ -58,6 +58,7 @@ pub fn generate_invite_token() -> String {
 /// Inner fn: insert an invites row and return the token.
 ///
 /// - `email` is lowercased + trimmed before storage.
+/// - `role` is stored as-is (caller must validate via `Role::parse` + `is_invitable()`).
 /// - `expires_at = now + 7 days` (D-14 single-use 7-day window).
 /// - `accepted = 0` (new invite is always unaccepted).
 /// - Token is generated via CSPRNG and stored in plaintext (D-14, T-02-16).
@@ -70,6 +71,7 @@ pub async fn create_invite(
     board_id: &str,
     inviter_id: &str,
     email: &str,
+    role: &str,
     now: i64,
 ) -> Result<String, sqlx::Error> {
     use uuid::Uuid;
@@ -81,13 +83,14 @@ pub async fn create_invite(
     let accepted: i64 = 0;
 
     sqlx::query!(
-        r#"INSERT INTO invites (id, board_id, inviter_id, email, token, expires_at, accepted)
-           VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+        r#"INSERT INTO invites (id, board_id, inviter_id, email, token, role, expires_at, accepted)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#,
         id,
         board_id,
         inviter_id,
         email,
         token,
+        role,
         expires_at,
         accepted,
     )
@@ -103,27 +106,30 @@ pub async fn create_invite(
 /// The link is returned regardless of whether email delivery succeeded (D-13).
 ///
 /// Security:
-/// - `require_board_member` returns a generic "board not found" for non-members (D-12)
-/// - Owner-only check rejects non-owner members explicitly (D-09)
+/// - `require_board_owner` returns a generic "board not found" for non-members (D-12)
+/// - Owner-only check is delegated to `require_board_owner` (D-09)
+/// - `role` is validated via `Role::parse` + `is_invitable()` — owner cannot be invited
 /// - Email is validated (trim, lowercase, non-empty, must contain '@')
 /// - All DB access is parameterized (T-02-17)
 #[server]
 pub async fn invite_member(
     board_id: String,
     email: String,
+    role: String,
 ) -> Result<String, ServerFnError> {
-    use crate::auth::helpers::require_board_member;
+    use crate::auth::helpers::require_board_owner;
     use crate::server::state::AppState;
 
     let state = expect_context::<AppState>();
 
-    // Auth + membership gate (D-12 — returns "board not found" for non-members)
-    let (user, role) = require_board_member(&board_id, &state.read_pool.0).await?;
+    // Auth + owner gate (D-09, D-12 — returns "board not found" for non-members)
+    let user = require_board_owner(&board_id, &state.read_pool.0).await?;
 
-    // Owner-only enforcement (D-09, T-02-14)
-    if role != "owner" {
-        return Err(ServerFnError::new("Only the board owner can invite members"));
-    }
+    // Validate the access level: must be an invitable role (viewer/commenter/editor)
+    let role = match crate::auth::role::Role::parse(&role) {
+        Some(r) if r.is_invitable() => r.as_str().to_string(),
+        _ => return Err(ServerFnError::new("Invalid access level")),
+    };
 
     // Validate email
     let email = email.trim().to_lowercase();
@@ -138,7 +144,7 @@ pub async fn invite_member(
         .map_err(|e| ServerFnError::new(format!("Clock error: {e}")))?;
 
     // Create invite row; returns token (D-14 — fresh token each time)
-    let token = create_invite(&state.write_pool.0, &board_id, &user.id, &email, now)
+    let token = create_invite(&state.write_pool.0, &board_id, &user.id, &email, &role, now)
         .await
         .map_err(|e| {
             tracing::error!("create_invite DB error: {:?}", e);
@@ -205,7 +211,7 @@ pub async fn consume_invite(
 ) -> Result<String, AcceptError> {
     // 1. Token lookup (parameterized — T-02-17)
     let row = sqlx::query!(
-        "SELECT id, board_id, email, expires_at, accepted FROM invites WHERE token = ?",
+        "SELECT id, board_id, email, role, expires_at, accepted FROM invites WHERE token = ?",
         token
     )
     .fetch_optional(pool)
@@ -251,9 +257,10 @@ pub async fn consume_invite(
     }
 
     sqlx::query!(
-        "INSERT OR IGNORE INTO board_members (board_id, user_id, role) VALUES (?, ?, 'member')",
+        "INSERT OR IGNORE INTO board_members (board_id, user_id, role) VALUES (?, ?, ?)",
         board_id,
-        user_id
+        user_id,
+        row.role
     )
     .execute(&mut *tx)
     .await?;
