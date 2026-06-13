@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use crate::models::BoardWithMeta;
 use crate::api::workspace_api::{ToggleStarBoard, ArchiveBoard};
+use crate::api::board_api::RenameBoard;
 use crate::components::presence_stack::PresenceStack;
 
 /// Validate a board color as a 6-digit hex (`#rrggbb`).
@@ -18,6 +19,8 @@ fn safe_hex(c: &str) -> &str {
 /// Renders:
 /// - Breadcrumb "Boards ›" (link to /)
 /// - Board title (17px/700) with a 14×14px solid color chip (radius 4px, T-03-17)
+///   - Owner: inline-editable (click to enter edit mode, Enter/blur saves, Esc cancels)
+///   - Non-owner: static display
 /// - Star toggle button (optimistic local state, dispatches ToggleStarBoard)
 /// - Owner-only Share button that opens the ShareModal
 /// - Filter search input and labels toggle
@@ -27,6 +30,8 @@ fn safe_hex(c: &str) -> &str {
 /// - T-03-17: `safe_hex` validates the board color before interpolating into inline style
 /// - T-03-20: `toggle_star_board` server fn enforces board membership before the UPDATE
 /// - T-03-28: archive_board server fn enforces owner-only check regardless of UI render
+/// - T-naw-01: rename_board server fn enforces owner-only independently of is_owner UI gate
+/// - T-naw-04: Leptos view! text interpolation escapes board name (no inner_html)
 #[component]
 pub fn BoardHeader(
     board: BoardWithMeta,
@@ -35,8 +40,11 @@ pub fn BoardHeader(
     /// Label expand/collapse signal from BoardSignals (CARD-06)
     labels_expanded: RwSignal<bool>,
     /// True when the current viewer holds the owner role on this board.
-    /// Controls visibility of the Share button (owner-only per UI-SPEC §Sharing).
+    /// Controls visibility of the Share button and inline-rename affordance.
     is_owner: bool,
+    /// Reactive board name — seeded from SSR data, updated live by BoardRenamed WS events.
+    /// Passed from board.rs BoardSignals so the header re-renders on remote renames.
+    board_name: RwSignal<String>,
 ) -> impl IntoView {
     // Validate the board color defensively (T-03-17)
     let validated_color = safe_hex(&board.color).to_string();
@@ -63,8 +71,6 @@ pub fn BoardHeader(
         });
     };
 
-    let board_name = board.name.clone();
-
     // ── Archive overflow action (inline-confirm, UI-SPEC §Archive Confirmation) ──
     // Inline-confirm state: false = show "Archive", true = show "Confirm archive" + Cancel
     let confirming_archive = RwSignal::new(false);
@@ -87,6 +93,49 @@ pub fn BoardHeader(
         }
     });
 
+    // ── Owner-only inline rename ──────────────────────────────────────────────
+    // Mirrors kanban_list.rs's inline-rename pattern exactly.
+    let editing = RwSignal::new(false);
+    let title_input_ref = NodeRef::<leptos::html::Input>::new();
+
+    // Auto-focus the input when entering edit mode (Pattern 3, mirrors kanban_list focus Effect)
+    Effect::new(move |_| {
+        if editing.get() {
+            if let Some(input) = title_input_ref.get() {
+                let _ = input.focus();
+            }
+        }
+    });
+
+    // RenameBoard server action — dispatched on Enter/blur when name changed and non-empty
+    let rename_action = ServerAction::<RenameBoard>::new();
+
+    // Store board.id in a StoredValue so commit_rename closure stays Fn (not FnOnce)
+    // Mirrors kanban_list.rs list_id_sv pattern exactly.
+    let rename_board_id_sv = StoredValue::new(board.id.clone());
+
+    // Commit rename closure — trims, compares, dispatches if changed & non-empty, always exits edit
+    let commit_rename = move || {
+        if let Some(input) = title_input_ref.get() {
+            let new_name = input.value();
+            let trimmed = new_name.trim().to_string();
+            let current = board_name.get_untracked();
+            if !trimmed.is_empty() && trimmed != current {
+                // Optimistic update — server fn publishes BoardRenamed which echoes back
+                // and sets board_name again (harmless idempotent set).
+                board_name.set(trimmed.clone());
+                rename_action.dispatch(RenameBoard {
+                    board_id: rename_board_id_sv.get_value(),
+                    name: trimmed,
+                    client_id: use_context::<crate::routes::board::BoardSignals>()
+                        .and_then(|bs| bs.own_client_id.get_untracked())
+                        .unwrap_or_default(),
+                });
+            }
+        }
+        editing.set(false);
+    };
+
     view! {
         <header class="lns-board-header">
             // ── Breadcrumb ────────────────────────────────────────────────
@@ -102,7 +151,47 @@ pub fn BoardHeader(
                     style=format!("background-color: {};", validated_color)
                     aria-hidden="true"
                 />
-                <h1 class="lns-board-title">{board_name}</h1>
+                // Owner: inline-editable title; Non-owner: static reactive title
+                {if is_owner {
+                    view! {
+                        <Show
+                            when=move || editing.get()
+                            fallback=move || view! {
+                                <h1
+                                    class="lns-board-title"
+                                    on:click=move |_| editing.set(true)
+                                >
+                                    {move || board_name.get()}
+                                </h1>
+                            }
+                        >
+                            <input
+                                node_ref=title_input_ref
+                                class="lns-board-title-input"
+                                type="text"
+                                prop:value=move || board_name.get_untracked()
+                                on:keydown={
+                                    let commit = commit_rename.clone();
+                                    move |e: leptos::ev::KeyboardEvent| {
+                                        match e.key().as_str() {
+                                            "Enter" => commit(),
+                                            "Escape" => editing.set(false),
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                                on:blur={
+                                    let commit = commit_rename.clone();
+                                    move |_| commit()
+                                }
+                            />
+                        </Show>
+                    }.into_any()
+                } else {
+                    view! {
+                        <h1 class="lns-board-title">{move || board_name.get()}</h1>
+                    }.into_any()
+                }}
             </div>
 
             // ── Star toggle ─────────────────────────────────────────────────
