@@ -3735,3 +3735,134 @@ input, textarea {
 .lns-sidebar-settings-link {
   margin-bottom: 4px;
 }
+
+/* =====================================================================
+   ShareModal — board sharing & access-level management
+   Append-only; matches the InvitePanel / create-board modal design tokens.
+   ===================================================================== */
+
+/* Inside the share modal the invite panel spans the full modal width (not its
+   standalone 400px) so it aligns with the Members section below it. */
+.lns-modal-content .lns-invite-panel { max-width: none; }
+
+/* The aria-live error region always renders (so screen readers can announce);
+   collapse it when it has no message so it doesn't add an empty gap. */
+.lns-error-banner:empty { display: none; }
+
+/* Block field label for the access-level select (matches FormField's .lns-label). */
+.lns-field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  letter-spacing: -0.005em;
+  line-height: 1.3;
+  margin-bottom: 6px;
+}
+
+/* Native <select> styled to match .lns-input, with a custom chevron. */
+.lns-select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 34px 10px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-family: var(--font-sans);
+  background-color: var(--bg-elevated);
+  color: var(--text);
+  outline: none;
+  cursor: pointer;
+  transition: border-color .12s;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M3 6l5 5 5-5' stroke='%238a8f98' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  background-size: 14px;
+}
+.lns-select:focus { border-color: var(--accent); }
+
+/* Compact, auto-width select used inside a member row. */
+.lns-select--inline {
+  width: auto;
+  padding: 6px 30px 6px 11px;
+  font-size: 13px;
+  background-position: right 9px center;
+  background-size: 13px;
+}
+
+/* Members section — separated from the invite section by a top divider. */
+.lns-share-members {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lns-share-members-heading {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 6px 0;
+}
+
+.lns-share-members-loading {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 4px 0;
+}
+
+/* One member: identity on the left, controls on the right. */
+.lns-share-member-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+}
+.lns-share-member-row:last-child { border-bottom: none; }
+
+.lns-share-member-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.lns-share-member-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.lns-share-member-email {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Right-side controls: the two ActionForms sit inline. */
+.lns-share-member-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.lns-share-member-controls form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+/* The owner's row shows a static label instead of controls. */
+.lns-share-member-owner-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 2px 4px;
+}
