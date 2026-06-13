@@ -8,7 +8,7 @@
 mod board_api_tests {
     use lanes::server::db::{init_pools, run_migrations};
     use lanes::api::workspace_api::derive_key_prefix;
-    use lanes::api::board_api::{get_board_inner, touch_last_viewed_inner};
+    use lanes::api::board_api::{get_board_inner, touch_last_viewed_inner, rename_board_inner};
     use tempfile::NamedTempFile;
 
     /// Create a temp DB with migrations applied; return (file guard, write_pool, read_pool).
@@ -300,5 +300,62 @@ mod board_api_tests {
         .expect("fetch owner");
 
         assert_eq!(stored_owner, Some(now), "owner timestamp must be correct");
+    }
+
+    // -------------------------------------------------------------------------
+    // test_rename_board_updates_name
+    // -------------------------------------------------------------------------
+
+    /// rename_board_inner trims whitespace and persists the new name to boards.
+    #[tokio::test]
+    async fn test_rename_board_updates_name() {
+        let (_file, write_pool, _read_pool) = test_db().await;
+        let user_id = insert_user_direct(&write_pool, "owner@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "Original Board", &user_id).await;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        rename_board_inner(&write_pool, &board_id, "  Renamed Board  ".to_string(), now)
+            .await
+            .expect("rename_board_inner");
+
+        let stored_name: String = sqlx::query_scalar("SELECT name FROM boards WHERE id = ?")
+            .bind(&board_id)
+            .fetch_one(&write_pool)
+            .await
+            .expect("fetch name");
+
+        assert_eq!(stored_name, "Renamed Board", "name must be trimmed and persisted");
+    }
+
+    // -------------------------------------------------------------------------
+    // test_rename_board_empty_rejected
+    // -------------------------------------------------------------------------
+
+    /// rename_board_inner with an empty name returns Err; the original name is unchanged.
+    #[tokio::test]
+    async fn test_rename_board_empty_rejected() {
+        let (_file, write_pool, _read_pool) = test_db().await;
+        let user_id = insert_user_direct(&write_pool, "owner@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "My Board", &user_id).await;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        let result = rename_board_inner(&write_pool, &board_id, "".to_string(), now).await;
+        assert!(result.is_err(), "empty name must return Err");
+
+        let stored_name: String = sqlx::query_scalar("SELECT name FROM boards WHERE id = ?")
+            .bind(&board_id)
+            .fetch_one(&write_pool)
+            .await
+            .expect("fetch name");
+
+        assert_eq!(stored_name, "My Board", "original name must be unchanged after rejection");
     }
 }

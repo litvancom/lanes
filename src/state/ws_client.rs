@@ -591,6 +591,7 @@ fn board_seq_of(event: &BoardEvent) -> Option<u64> {
         BoardEvent::ListRenamed { board_seq, .. } => Some(*board_seq),
         BoardEvent::ListReordered { board_seq, .. } => Some(*board_seq),
         BoardEvent::ListArchived { board_seq, .. } => Some(*board_seq),
+        BoardEvent::BoardRenamed { board_seq, .. } => Some(*board_seq),
         BoardEvent::Refresh => None,
     }
 }
@@ -1048,6 +1049,11 @@ pub fn apply_board_event(signals: BoardSignals, event: BoardEvent, own_client_id
         BoardEvent::ListRenamed { board_seq, .. } => { signals.last_seen_seq.set(board_seq); }
         BoardEvent::ListReordered { board_seq, .. } => { signals.last_seen_seq.set(board_seq); }
         BoardEvent::ListArchived { board_seq, .. } => { signals.last_seen_seq.set(board_seq); }
+
+        BoardEvent::BoardRenamed { board_seq, client_id: _, board_id: _, name } => {
+            signals.last_seen_seq.set(board_seq);
+            signals.board_name.set(name);
+        }
 
         BoardEvent::Refresh => {
             // Handled by apply_board_event_async (WASM path) before reaching here.

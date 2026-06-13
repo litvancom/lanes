@@ -112,6 +112,8 @@ pub struct BoardSignals {
     pub move_card_action: ServerAction<MoveCard>,
     /// Board ID (needed by KanbanList commit_drop to dispatch MoveCard)
     pub board_id: RwSignal<String>,
+    /// Reactive board name — seeded from SSR data; updated live by BoardRenamed events.
+    pub board_name: RwSignal<String>,
     // ── Realtime (Phase 6) ──────────────────────────────────────────────────
     /// The client_id assigned by the server in the Connected handshake.
     /// Stored here so every mutation dispatch can include it (D-05/Flag 2).
@@ -304,6 +306,7 @@ pub fn BoardPage() -> impl IntoView {
                                     labels_expanded: RwSignal::new(false),
                                     move_card_action,
                                     board_id: RwSignal::new(data.board.id.clone()),
+                                    board_name: RwSignal::new(data.board.name.clone()),
                                     // Phase 6 realtime fields
                                     own_client_id: RwSignal::new(None),
                                     last_seen_seq: RwSignal::new(data.board_seq),
