@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use leptos_meta::*;
-use leptos_router::{components::Router, components::Routes, components::Route, components::ParentRoute, path, SsrMode};
+use leptos_router::{components::Router, components::Routes, components::Route, components::ParentRoute, path};
 use crate::routes::workspace::WorkspacePage;
 use crate::routes::signup::SignupPage;
 use crate::routes::login::LoginPage;
@@ -37,7 +37,7 @@ pub fn App() -> impl IntoView {
         />
         <Router>
             <Routes fallback=|| view! { <p>"Not found."</p> }>
-                <Route path=path!("/") view=WorkspacePage ssr=SsrMode::Async/>
+                <Route path=path!("/") view=WorkspacePage/>
                 <Route path=path!("/signup") view=SignupPage/>
                 <Route path=path!("/login") view=LoginPage/>
                 <Route path=path!("/invite/:token") view=InviteAcceptPage/>
@@ -45,10 +45,10 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("card/:card_num") view=CardDetailRoute/>
                     <Route path=path!("") view=|| ()/>
                 </ParentRoute>
-                <Route path=path!("/archive") view=ArchivePage ssr=SsrMode::Async/>
-                <Route path=path!("/inbox") view=InboxPage ssr=SsrMode::Async/>
-                <Route path=path!("/calendar") view=CalendarPage ssr=SsrMode::Async/>
-                <Route path=path!("/settings") view=SettingsPage ssr=SsrMode::Async/>
+                <Route path=path!("/archive") view=ArchivePage/>
+                <Route path=path!("/inbox") view=InboxPage/>
+                <Route path=path!("/calendar") view=CalendarPage/>
+                <Route path=path!("/settings") view=SettingsPage/>
             </Routes>
         </Router>
     }
