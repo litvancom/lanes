@@ -4,6 +4,10 @@ use std::path::PathBuf;
 pub struct Config {
     pub database_url: String,
     pub site_addr: String,
+    /// Whether the session cookie carries the `Secure` attribute (HTTPS-only).
+    /// Secure by default; set `COOKIE_SECURE=false` for plain-HTTP deployments
+    /// (e.g. a LAN-only homelab where TLS terminates nowhere).
+    pub cookie_secure: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -29,9 +33,17 @@ impl Config {
             .or_else(|_| std::env::var("LANES_SITE_ADDR"))
             .unwrap_or_else(|_| "127.0.0.1:3000".to_string());
 
+        // Secure by default; only explicit falsey values disable it. This keeps
+        // the safe default (Secure cookies) for anyone who doesn't set the var,
+        // while letting plain-HTTP deployments opt out via COOKIE_SECURE=false.
+        let cookie_secure = std::env::var("COOKIE_SECURE")
+            .map(|v| !matches!(v.trim().to_ascii_lowercase().as_str(), "false" | "0" | "no" | "off"))
+            .unwrap_or(true);
+
         Ok(Config {
             database_url,
             site_addr,
+            cookie_secure,
         })
     }
 

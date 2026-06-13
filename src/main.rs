@@ -146,7 +146,7 @@ async fn start_server() {
 
     // 30-day sliding session (D-06); SameSite=Lax so invite GET links work (not Strict, anti-pattern note)
     let session_layer = SessionManagerLayer::new(session_store)
-        .with_secure(true)        // T-02-04: HttpOnly + Secure
+        .with_secure(config.cookie_secure)  // T-02-04: Secure by default; COOKIE_SECURE=false for plain HTTP
         .with_http_only(true)
         .with_same_site(SameSite::Lax) // T-02-05: Lax allows GET from email links; mutations are POST
         .with_expiry(Expiry::OnInactivity(Duration::days(30))); // D-06: sliding 30-day
