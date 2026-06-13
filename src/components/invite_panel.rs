@@ -43,8 +43,6 @@ pub fn InvitePanel(
 
     view! {
         <div class="lns-invite-panel">
-            <h2 class="lns-invite-panel-heading">"Invite to board"</h2>
-
             // Error banner — shown when action returns Err (e.g. owner-only rejection)
             <ErrorBanner message=error_message />
 
