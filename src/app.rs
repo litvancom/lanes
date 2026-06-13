@@ -15,6 +15,8 @@ use crate::routes::settings::SettingsPage;
 #[component]
 pub fn App() -> impl IntoView {
     provide_meta_context();
+    // Hydration-safety flag for clock-derived rendering (see crate::hydration).
+    crate::hydration::provide_hydrated();
 
     view! {
         <Stylesheet id="leptos" href="/pkg/lanes.css"/>

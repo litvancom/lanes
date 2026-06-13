@@ -339,7 +339,11 @@ fn render_comment_entry(entry: ActivityEntry) -> impl IntoView {
         .take(2)
         .collect();
     let body = entry.text.clone(); // plain text — XSS-safe text node below
-    let time_str = relative_time(entry.created_at);
+    // Clock-derived relative time → gate on hydration so SSR and the initial
+    // client hydrate render produce identical markup (see crate::hydration).
+    let created_at = entry.created_at;
+    let hydrated = crate::hydration::use_hydrated();
+    let time_str = move || if hydrated.get() { relative_time(created_at) } else { String::new() };
 
     view! {
         <div class="lns-activity-item">
@@ -372,7 +376,11 @@ fn render_event_entry(entry: ActivityEntry) -> impl IntoView {
         .filter_map(|w| w.chars().next())
         .take(2)
         .collect();
-    let time_str = relative_time(entry.created_at);
+    // Clock-derived relative time → gate on hydration so SSR and the initial
+    // client hydrate render produce identical markup (see crate::hydration).
+    let created_at = entry.created_at;
+    let hydrated = crate::hydration::use_hydrated();
+    let time_str = move || if hydrated.get() { relative_time(created_at) } else { String::new() };
 
     // Humanize the event kind and payload
     let description = humanize_event(&entry.text, entry.payload.as_deref());

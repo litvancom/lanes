@@ -246,48 +246,50 @@ fn InboxBuckets(
     notifications: Resource<Result<Vec<NotificationRow>, ServerFnError>>,
     unread_count: RwSignal<i64>,
 ) -> impl IntoView {
-    let today_start = today_start_ms();
+    // The bucket boundaries depend on the local day, which the server (UTC) and
+    // the browser compute differently — a structural hydration mismatch around
+    // midnight. Bucket reactively: pre-hydration a sentinel lands every row in
+    // one bucket so SSR and the initial client render agree; after mount we
+    // bucket against the real day boundary (see crate::hydration).
+    let hydrated = crate::hydration::use_hydrated();
+    let rows = StoredValue::new(rows);
 
-    // Group into ordered buckets
-    let buckets: Vec<(&'static str, Vec<NotificationRow>)> = {
+    move || {
+        let today_start = if hydrated.get() { today_start_ms() } else { i64::MAX };
+
         let mut today_rows: Vec<NotificationRow> = Vec::new();
         let mut week_rows: Vec<NotificationRow> = Vec::new();
         let mut older_rows: Vec<NotificationRow> = Vec::new();
-        for row in rows {
+        for row in rows.get_value() {
             match bucket_for(row.created_at, today_start) {
                 "Today" => today_rows.push(row),
                 "Earlier this week" => week_rows.push(row),
                 _ => older_rows.push(row),
             }
         }
-        let mut result = Vec::new();
-        if !today_rows.is_empty() { result.push(("Today", today_rows)); }
-        if !week_rows.is_empty() { result.push(("Earlier this week", week_rows)); }
-        if !older_rows.is_empty() { result.push(("Older", older_rows)); }
-        result
-    };
+        let mut buckets: Vec<(&'static str, Vec<NotificationRow>)> = Vec::new();
+        if !today_rows.is_empty() { buckets.push(("Today", today_rows)); }
+        if !week_rows.is_empty() { buckets.push(("Earlier this week", week_rows)); }
+        if !older_rows.is_empty() { buckets.push(("Older", older_rows)); }
 
-    view! {
-        {buckets.into_iter().map(|(label, bucket_rows)| {
+        buckets.into_iter().map(|(label, bucket_rows)| {
             view! {
                 <div class="lns-inbox-bucket">
                     <div class="lns-inbox-bucket-label">{label}</div>
                     <div class="lns-inbox-list">
                         {bucket_rows.into_iter().map(|row| {
-                            let notifications_ref = notifications;
-                            let unread_count_ref = unread_count;
                             view! {
                                 <InboxRow
                                     row=row
-                                    notifications=notifications_ref
-                                    unread_count=unread_count_ref
+                                    notifications=notifications
+                                    unread_count=unread_count
                                 />
                             }
                         }).collect_view()}
                     </div>
                 </div>
             }
-        }).collect_view()}
+        }).collect_view()
     }
 }
 
@@ -309,8 +311,16 @@ fn InboxRow(
     // Summary text and meta
     let summary = notification_summary(&row);
     let board_name = row.board_name.clone().unwrap_or_default();
-    let rel_time = relative_time_inbox(row.created_at);
-    let meta_line = format!("{} · {}", board_name, rel_time);
+    // The relative time is clock-derived → gate on hydration so SSR and the
+    // initial client render match (see crate::hydration). Before mount we show
+    // just the board name; the "· N ago" suffix fills in once mounted.
+    let created_at = row.created_at;
+    let hydrated = crate::hydration::use_hydrated();
+    let meta_line = move || if hydrated.get() {
+        format!("{} · {}", board_name, relative_time_inbox(created_at))
+    } else {
+        board_name.clone()
+    };
 
     // Icon name and CSS class per kind
     let (icon_name, icon_tile_class) = match row.kind.as_str() {

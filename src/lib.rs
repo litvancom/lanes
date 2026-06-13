@@ -2,6 +2,7 @@
 #![recursion_limit = "256"]
 
 pub mod app;
+pub mod hydration;
 pub mod models;
 pub mod routes;
 pub mod components;

@@ -436,8 +436,12 @@ fn DayCell(
     // Per-day expanded signal for "+N more" overflow (D-12)
     let expanded = RwSignal::new(false);
 
+    // "Today" depends on the wall clock, which differs between the server (UTC)
+    // and the browser → gate the highlight on hydration so SSR and the initial
+    // client render match; the highlight fills in after mount (crate::hydration).
+    let hydrated = crate::hydration::use_hydrated();
     let cell_class = move || {
-        if is_today {
+        if is_today && hydrated.get() {
             "lns-calendar-day lns-calendar-day--today"
         } else {
             "lns-calendar-day"
@@ -511,16 +515,24 @@ fn CalChip(card: CalendarCard) -> impl IntoView {
     let due_ms = card.due_at;
     let done = card.done;
 
+    // The overdue/due-soon tone is clock-derived → gate on hydration so SSR and
+    // the initial client render emit the same class; the tone fills in after
+    // mount (see crate::hydration). The `done` class is data-derived and stays.
+    let hydrated = crate::hydration::use_hydrated();
     let chip_class = move || {
         let base = "lns-cal-chip";
         if done {
             format!("{} done", base)
-        } else if let Some(due) = due_ms {
-            let now = now_ms();
-            if due < now {
-                format!("{} due-overdue", base)
-            } else if due <= now + 24 * 60 * 60 * 1000 {
-                format!("{} due-soon", base)
+        } else if hydrated.get() {
+            if let Some(due) = due_ms {
+                let now = now_ms();
+                if due < now {
+                    format!("{} due-overdue", base)
+                } else if due <= now + 24 * 60 * 60 * 1000 {
+                    format!("{} due-soon", base)
+                } else {
+                    base.to_string()
+                }
             } else {
                 base.to_string()
             }

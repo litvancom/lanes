@@ -546,7 +546,13 @@ pub fn CardDetailModal(
                                                 </div>
                                                 <span style="font-size: 11px; color: var(--text-muted)">
                                                     "· created "
-                                                    {relative_time(created_at)}
+                                                    // Clock-derived → gate on hydration so SSR and the
+                                                    // initial hydrate render match (see crate::hydration).
+                                                    {move || if crate::hydration::use_hydrated().get() {
+                                                        relative_time(created_at)
+                                                    } else {
+                                                        String::new()
+                                                    }}
                                                 </span>
                                             </div>
                                         </div>
