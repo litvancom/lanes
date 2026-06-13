@@ -1035,6 +1035,21 @@ input, textarea {
   margin: 0;
 }
 
+/* Inline-rename input — matches .lns-board-title typography (owner edit mode) */
+.lns-board-title-input {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--text);
+  margin: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-xs);
+  background: var(--bg-elevated);
+  outline: none;
+  min-width: 0;
+}
+
 /* Star button — 28×28px touch target */
 .lns-star-btn {
   display: flex;
