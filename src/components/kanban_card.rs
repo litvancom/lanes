@@ -155,6 +155,17 @@ pub fn KanbanCard(
     let card_id_for_flash = card.get_untracked().id.clone();
     let card_id_for_fading = card_id_for_flash.clone();
 
+    // Hydration safety: the due-date *tone* (overdue/soon) is derived from the
+    // wall clock, which differs between the server (UTC) and the browser. If we
+    // emitted it during SSR, the server-rendered class wouldn't match what the
+    // client computes on hydrate — an intermittent mismatch that crashes tachys
+    // hydration. So render a neutral tone during SSR and the initial hydrate
+    // pass (identical markup), then flip this on after mount (client-only) so the
+    // real tone is applied reactively, post-hydration. The label is derived from
+    // the card's due_at alone and is always deterministic.
+    let due_tone_ready = RwSignal::new(false);
+    Effect::new(move |_| due_tone_ready.set(true));
+
     view! {
         <div
             class="lns-card"
@@ -285,7 +296,10 @@ pub fn KanbanCard(
                             let Some(due_ms) = card.get().due_at else {
                                 return ().into_any();
                             };
-                            let (label, tone) = format_due(due_ms);
+                            let (label, computed_tone) = format_due(due_ms);
+                            // Neutral tone until after mount, so SSR and the initial
+                            // hydrate render produce identical markup (see due_tone_ready).
+                            let tone = if due_tone_ready.get() { computed_tone } else { "" };
                             let cls = if tone.is_empty() {
                                 "lns-card-meta-item".to_string()
                             } else {
