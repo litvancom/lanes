@@ -182,22 +182,29 @@ pub async fn touch_last_viewed_inner(
     Ok(())
 }
 
-/// Internal: update a board's name.
-/// Validation: trim, reject empty, reject > 120 chars (T-naw-02 Tampering mitigation).
-/// Also sets `updated_at` (boards table has this column, unlike lists).
+/// Internal: owner-gate, validate, and update a board's name.
+/// Enforces owner-only (T-naw-01) and validates the name (T-naw-02: trim, reject
+/// empty, reject > 120 chars) before any write, returning the trimmed name on success
+/// so the caller can publish it. Also sets `updated_at` (boards has this column, unlike
+/// lists). Mirrors `set_archived_inner`'s `role`-param owner-gate pattern for testability.
 #[cfg(feature = "ssr")]
 pub async fn rename_board_inner(
     pool: &sqlx::SqlitePool,
     board_id: &str,
+    role: &str,
     name: String,
     now: i64,
-) -> Result<(), sqlx::Error> {
+) -> Result<String, String> {
+    if role != "owner" {
+        return Err("Only the board owner can rename this board".into());
+    }
+
     let name = name.trim().to_string();
     if name.is_empty() {
-        return Err(sqlx::Error::Decode("Board name cannot be empty".into()));
+        return Err("Board name cannot be empty".into());
     }
     if name.chars().count() > 120 {
-        return Err(sqlx::Error::Decode("Board name must be 120 characters or fewer".into()));
+        return Err("Board name must be 120 characters or fewer".into());
     }
 
     sqlx::query("UPDATE boards SET name = ?, updated_at = ? WHERE id = ?")
@@ -205,9 +212,10 @@ pub async fn rename_board_inner(
         .bind(now)
         .bind(board_id)
         .execute(pool)
-        .await?;
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
 
-    Ok(())
+    Ok(name)
 }
 
 // ---------------------------------------------------------------------------
@@ -281,31 +289,18 @@ pub async fn rename_board(board_id: String, name: String, client_id: String) -> 
 
     let state = expect_context::<AppState>();
 
-    // Auth + membership gate; then enforce owner-only (T-naw-01).
-    // Uses require_board_member + explicit role check (mirrors REST update_board pattern).
+    // Auth + membership gate (T-03-10, D-12). The owner-gate + name validation live in
+    // rename_board_inner (T-naw-01/T-naw-02), which returns the trimmed name to publish.
     let (_user, role) = require_board_member(&board_id, &state.read_pool.0).await?;
-    if role != "owner" {
-        return Err(ServerFnError::new("Only the board owner can rename this board"));
-    }
-
-    // Validate name before any write (T-naw-02: trim, reject empty, reject > 120)
-    let name = name.trim().to_string();
-    if name.is_empty() {
-        return Err(ServerFnError::new("Board name cannot be empty"));
-    }
-    if name.chars().count() > 120 {
-        return Err(ServerFnError::new("Board name must be 120 characters or fewer"));
-    }
 
     let now = now_millis().map_err(|e| {
         tracing::error!("clock error: {e}");
         ServerFnError::new("Clock error")
     })?;
 
-    rename_board_inner(&state.write_pool.0, &board_id, name.clone(), now).await.map_err(|e| {
-        tracing::error!("rename_board_inner error: {e}");
-        ServerFnError::new("Failed to rename board")
-    })?;
+    let name = rename_board_inner(&state.write_pool.0, &board_id, &role, name, now)
+        .await
+        .map_err(ServerFnError::new)?;
 
     // Publish BoardRenamed after successful DB write (T-6-07).
     // CR-04: publish_seq allocates seq and sends atomically under the same entry guard.

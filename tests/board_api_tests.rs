@@ -318,9 +318,10 @@ mod board_api_tests {
             .unwrap()
             .as_millis() as i64;
 
-        rename_board_inner(&write_pool, &board_id, "  Renamed Board  ".to_string(), now)
+        let returned = rename_board_inner(&write_pool, &board_id, "owner", "  Renamed Board  ".to_string(), now)
             .await
             .expect("rename_board_inner");
+        assert_eq!(returned, "Renamed Board", "inner must return the trimmed name");
 
         let stored_name: String = sqlx::query_scalar("SELECT name FROM boards WHERE id = ?")
             .bind(&board_id)
@@ -347,7 +348,7 @@ mod board_api_tests {
             .unwrap()
             .as_millis() as i64;
 
-        let result = rename_board_inner(&write_pool, &board_id, "".to_string(), now).await;
+        let result = rename_board_inner(&write_pool, &board_id, "owner", "".to_string(), now).await;
         assert!(result.is_err(), "empty name must return Err");
 
         let stored_name: String = sqlx::query_scalar("SELECT name FROM boards WHERE id = ?")
@@ -357,5 +358,48 @@ mod board_api_tests {
             .expect("fetch name");
 
         assert_eq!(stored_name, "My Board", "original name must be unchanged after rejection");
+    }
+
+    // -------------------------------------------------------------------------
+    // test_rename_board_owner_only
+    // -------------------------------------------------------------------------
+
+    /// A non-owner (editor) role is rejected by rename_board_inner and the name is
+    /// unchanged; an owner role succeeds. Mirrors test_archive_board_owner_only — the
+    /// server fn resolves the role via require_board_member, then this gate enforces
+    /// owner-only independently of any client UI (T-naw-01).
+    #[tokio::test]
+    async fn test_rename_board_owner_only() {
+        let (_file, write_pool, _read_pool) = test_db().await;
+        let user_id = insert_user_direct(&write_pool, "owner@test.com").await;
+        let board_id = insert_board_direct(&write_pool, "My Board", &user_id).await;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        // Editor cannot rename — returns Err, name unchanged
+        let result = rename_board_inner(&write_pool, &board_id, "editor", "Hijacked".to_string(), now).await;
+        assert!(result.is_err(), "non-owner (editor) must be rejected");
+
+        let stored_name: String = sqlx::query_scalar("SELECT name FROM boards WHERE id = ?")
+            .bind(&board_id)
+            .fetch_one(&write_pool)
+            .await
+            .expect("fetch name");
+        assert_eq!(stored_name, "My Board", "name must be unchanged after editor attempt");
+
+        // Owner can rename
+        rename_board_inner(&write_pool, &board_id, "owner", "Owner Renamed".to_string(), now)
+            .await
+            .expect("owner should be able to rename");
+
+        let stored_name: String = sqlx::query_scalar("SELECT name FROM boards WHERE id = ?")
+            .bind(&board_id)
+            .fetch_one(&write_pool)
+            .await
+            .expect("fetch name after owner rename");
+        assert_eq!(stored_name, "Owner Renamed", "owner rename must persist");
     }
 }
