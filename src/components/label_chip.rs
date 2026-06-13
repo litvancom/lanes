@@ -30,7 +30,7 @@ fn safe_color(color: &str) -> &str {
 /// When `expanded` is false: renders a narrow 8px colored bar (collapsed state).
 /// When `expanded` is true: renders an 18px pill with the label name (expanded state).
 ///
-/// CSS transition on `.lns-label` handles the smooth height change.
+/// CSS transition on `.lns-label-chip` handles the smooth height change.
 /// Color is validated via `safe_color` before interpolation (T-04-06).
 #[component]
 pub fn LabelChip(
@@ -48,7 +48,7 @@ pub fn LabelChip(
                 let c = color_for_fallback.clone();
                 move || view! {
                     <span
-                        class="lns-label"
+                        class="lns-label-chip"
                         style=format!("background:{}", c)
                         aria-hidden="true"
                     />
@@ -56,7 +56,7 @@ pub fn LabelChip(
             }
         >
             <span
-                class="lns-label expanded"
+                class="lns-label-chip expanded"
                 style=format!("background:{}", validated_color)
             >
                 {label_name.clone()}

@@ -2324,7 +2324,7 @@ input, textarea {
 }
 
 /* Label chip — collapsed bar */
-.lns-label {
+.lns-label-chip {
   display: inline-flex;
   align-items: center;
   height: 8px;
@@ -2335,7 +2335,7 @@ input, textarea {
 }
 
 /* Label chip — expanded pill */
-.lns-label.expanded {
+.lns-label-chip.expanded {
   height: 18px;
   padding: 0 8px;
   min-width: 0;

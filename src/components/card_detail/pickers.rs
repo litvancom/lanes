@@ -226,7 +226,7 @@ pub fn LabelPicker(
                                     }
                                 >
                                     <span
-                                        class="lns-label"
+                                        class="lns-label-chip"
                                         style=format!("background: {}; height: 12px; width: 40px; border-radius: 3px; flex-shrink: 0", color)
                                     />
                                     <span>{name.clone()}</span>

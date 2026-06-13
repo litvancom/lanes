@@ -564,7 +564,7 @@ pub fn CardDetailModal(
                                                             let name = label.name.clone();
                                                             view! {
                                                                 <span
-                                                                    class="lns-label expanded"
+                                                                    class="lns-label-chip expanded"
                                                                     style=format!("background: {}", color)
                                                                 >
                                                                     {name}
