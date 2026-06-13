@@ -3760,6 +3760,11 @@ input, textarea {
   margin-bottom: 6px;
 }
 
+/* Invite form vertical rhythm: separate the access-level group from the email
+   field above it, and give the submit button room from the select. */
+.lns-invite-panel .lns-field-label { margin-top: 16px; }
+.lns-invite-panel .lns-btn--full { margin-top: 14px; }
+
 /* Native <select> styled to match .lns-input, with a custom chevron. */
 .lns-select {
   width: 100%;
