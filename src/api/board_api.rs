@@ -182,6 +182,34 @@ pub async fn touch_last_viewed_inner(
     Ok(())
 }
 
+/// Internal: update a board's name.
+/// Validation: trim, reject empty, reject > 120 chars (T-naw-02 Tampering mitigation).
+/// Also sets `updated_at` (boards table has this column, unlike lists).
+#[cfg(feature = "ssr")]
+pub async fn rename_board_inner(
+    pool: &sqlx::SqlitePool,
+    board_id: &str,
+    name: String,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err(sqlx::Error::Decode("Board name cannot be empty".into()));
+    }
+    if name.chars().count() > 120 {
+        return Err(sqlx::Error::Decode("Board name must be 120 characters or fewer".into()));
+    }
+
+    sqlx::query("UPDATE boards SET name = ?, updated_at = ? WHERE id = ?")
+        .bind(&name)
+        .bind(now)
+        .bind(board_id)
+        .execute(pool)
+        .await?;
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Server functions (Leptos #[server] wrappers around inner fns)
 // ---------------------------------------------------------------------------
@@ -239,4 +267,54 @@ pub async fn touch_last_viewed(board_id: String) -> Result<(), ServerFnError> {
         tracing::error!("touch_last_viewed_inner error: {e}");
         ServerFnError::new("Failed to update last viewed")
     })
+}
+
+/// Rename a board. Enforces owner-only (T-naw-01). Validates name (T-naw-02).
+/// Publishes `BoardRenamed` for live sync to all connected viewers.
+/// `client_id`: opaque per-connection UUID for D-05 self-echo suppression.
+#[server]
+pub async fn rename_board(board_id: String, name: String, client_id: String) -> Result<(), ServerFnError> {
+    use crate::auth::helpers::require_board_member;
+    use crate::server::state::AppState;
+    use crate::server::now_millis;
+    use crate::models::events::BoardEvent;
+
+    let state = expect_context::<AppState>();
+
+    // Auth + membership gate; then enforce owner-only (T-naw-01).
+    // Uses require_board_member + explicit role check (mirrors REST update_board pattern).
+    let (_user, role) = require_board_member(&board_id, &state.read_pool.0).await?;
+    if role != "owner" {
+        return Err(ServerFnError::new("Only the board owner can rename this board"));
+    }
+
+    // Validate name before any write (T-naw-02: trim, reject empty, reject > 120)
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err(ServerFnError::new("Board name cannot be empty"));
+    }
+    if name.chars().count() > 120 {
+        return Err(ServerFnError::new("Board name must be 120 characters or fewer"));
+    }
+
+    let now = now_millis().map_err(|e| {
+        tracing::error!("clock error: {e}");
+        ServerFnError::new("Clock error")
+    })?;
+
+    rename_board_inner(&state.write_pool.0, &board_id, name.clone(), now).await.map_err(|e| {
+        tracing::error!("rename_board_inner error: {e}");
+        ServerFnError::new("Failed to rename board")
+    })?;
+
+    // Publish BoardRenamed after successful DB write (T-6-07).
+    // CR-04: publish_seq allocates seq and sends atomically under the same entry guard.
+    state.board_rooms.publish_seq(&board_id, |seq| BoardEvent::BoardRenamed {
+        board_seq: seq,
+        client_id,
+        board_id: board_id.clone(),
+        name,
+    });
+
+    Ok(())
 }

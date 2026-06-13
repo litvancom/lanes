@@ -145,6 +145,13 @@ pub enum BoardEvent {
         client_id: String,
         list_id: String,
     },
+    /// The board was renamed.
+    BoardRenamed {
+        board_seq: u64,
+        client_id: String,
+        board_id: String,
+        name: String,
+    },
     /// A card was moved to another board (the card disappeared from this board).
     CardMovedCrossBoard {
         board_seq: u64,
@@ -182,6 +189,7 @@ impl BoardEvent {
             BoardEvent::ListRenamed { client_id, .. } => Some(client_id),
             BoardEvent::ListReordered { client_id, .. } => Some(client_id),
             BoardEvent::ListArchived { client_id, .. } => Some(client_id),
+            BoardEvent::BoardRenamed { client_id, .. } => Some(client_id),
             BoardEvent::CardMovedCrossBoard { client_id, .. } => Some(client_id),
         }
     }
@@ -208,6 +216,7 @@ impl BoardEvent {
             BoardEvent::ListRenamed { board_seq, .. } => Some(*board_seq),
             BoardEvent::ListReordered { board_seq, .. } => Some(*board_seq),
             BoardEvent::ListArchived { board_seq, .. } => Some(*board_seq),
+            BoardEvent::BoardRenamed { board_seq, .. } => Some(*board_seq),
             BoardEvent::CardMovedCrossBoard { board_seq, .. } => Some(*board_seq),
         }
     }
