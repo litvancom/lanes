@@ -78,7 +78,11 @@ web-sys = { version = "0.3", optional = true, features = [
 gloo-timers = { version = "0.3", optional = true, features = ["futures"] }
 
 [features]
-default = []
+# `ssr` is the default so bare `cargo`/rust-analyzer (IDE) resolve the optional
+# server deps (e.g. fractional_index) without manual feature flags. The real
+# builds are unaffected: cargo-leptos, CI, Docker, and tests all pass
+# `--no-default-features` and select `ssr`/`hydrate` explicitly.
+default = ["ssr"]
 hydrate = [
     "leptos/hydrate",
     "dep:chrono",
