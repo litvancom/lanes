@@ -100,6 +100,10 @@ pub fn WorkspaceSidebar(
             </nav>
 
             // --- Starred section (hidden when empty, D-04) ---
+            // Wrapped in <Suspense> for the same reason as the BOARDS list below:
+            // wait for the blocking `starred` resource instead of racing a
+            // synchronous read that can return empty under concurrent SSR load.
+            <Suspense fallback=|| ()>
             <Show when=move || !starred_boards.get().is_empty()>
                 <div class="lns-sidebar-section">
                     <h3 class="lns-sidebar-section-label">"STARRED"</h3>
@@ -136,27 +140,37 @@ pub fn WorkspaceSidebar(
                     />
                 </div>
             </Show>
+            </Suspense>
 
             // --- All boards section ---
+            // The <For> is wrapped in <Suspense> so SSR WAITS for the blocking
+            // `boards` resource to resolve before rendering the links, instead of
+            // reading it synchronously outside Suspense. Under concurrent load that
+            // synchronous read could return `None` (resource not yet resolved) →
+            // empty SSR list while the client hydrated the serialized value →
+            // structural mismatch (tachys "unreachable"). Suspending defers the
+            // render until the value is available, so SSR and hydrate agree.
             <div class="lns-sidebar-section">
                 <h3 class="lns-sidebar-section-label">"BOARDS"</h3>
-                <For
-                    each=move || all_boards.get()
-                    key=|b| b.id.clone()
-                    children=move |board| {
-                        let c = safe_hex(&board.color);
-                        let chip_style = format!(
-                            "background:{c};width:14px;height:14px;border-radius:4px;flex-shrink:0;"
-                        );
-                        let href = format!("/board/{}", board.id);
-                        view! {
-                            <a href=href class="lns-sidebar-board-link lns-sidebar-item">
-                                <span class="lns-sidebar-chip" style=chip_style/>
-                                <span class="lns-sidebar-board-name">{board.name.clone()}</span>
-                            </a>
+                <Suspense fallback=|| ()>
+                    <For
+                        each=move || all_boards.get()
+                        key=|b| b.id.clone()
+                        children=move |board| {
+                            let c = safe_hex(&board.color);
+                            let chip_style = format!(
+                                "background:{c};width:14px;height:14px;border-radius:4px;flex-shrink:0;"
+                            );
+                            let href = format!("/board/{}", board.id);
+                            view! {
+                                <a href=href class="lns-sidebar-board-link lns-sidebar-item">
+                                    <span class="lns-sidebar-chip" style=chip_style/>
+                                    <span class="lns-sidebar-board-name">{board.name.clone()}</span>
+                                </a>
+                            }
                         }
-                    }
-                />
+                    />
+                </Suspense>
             </div>
 
             // --- Bottom: settings link + invite teammate ---
