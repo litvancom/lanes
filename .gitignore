@@ -2,3 +2,7 @@
 /data
 /.env
 .tokensave
+
+# Internal planning docs and design handoff — not part of the public OSS repo
+/.planning
+/design-ref
