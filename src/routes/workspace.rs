@@ -84,9 +84,16 @@ pub fn WorkspacePage() -> impl IntoView {
                 }.into_any(),
                 Ok(Some(user)) => {
                     // ── Resources ──────────────────────────────────────────────────────────
-                    let boards = Resource::new(|| (), |_| async { list_boards_with_meta().await });
+                    // `boards` and `starred` feed the sidebar's <For>/<Show> lists, which
+                    // render OUTSIDE any <Suspense>. They must be blocking so SSR awaits
+                    // them before emitting the sidebar — otherwise SSR renders empty lists
+                    // (comment placeholders) while the client hydrates the resolved lists
+                    // (<a> items), a structural mismatch that crashes hydration
+                    // (tachys "unreachable", sidebar.rs:153). `recents`/`today` are read
+                    // inside <Suspense>, so they stay non-blocking.
+                    let boards = Resource::new_blocking(|| (), |_| async { list_boards_with_meta().await });
                     let recents = Resource::new(|| (), |_| async { list_recent_boards().await });
-                    let starred = Resource::new(|| (), |_| async { list_starred_boards().await });
+                    let starred = Resource::new_blocking(|| (), |_| async { list_starred_boards().await });
                     let today = Resource::new(|| (), |_| async { fetch_today_strip().await });
 
                     // ── Star toggle action ─────────────────────────────────────────────────
