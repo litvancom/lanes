@@ -154,8 +154,8 @@ pub fn ArchivePage() -> impl IntoView {
                     });
 
                     // Sidebar board data — mirrors workspace.rs pattern (WR-04)
-                    let boards = Resource::new(|| (), |_| async { list_boards_with_meta().await });
-                    let starred = Resource::new(|| (), |_| async { list_starred_boards().await });
+                    let boards = Resource::new_blocking(|| (), |_| async { list_boards_with_meta().await });
+                    let starred = Resource::new_blocking(|| (), |_| async { list_starred_boards().await });
 
                     let restore_action = ServerAction::<RestoreBoard>::new();
                     let delete_action = ServerAction::<DeleteBoard>::new();

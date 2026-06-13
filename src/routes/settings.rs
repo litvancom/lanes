@@ -46,8 +46,8 @@ pub fn SettingsPage() -> impl IntoView {
 #[component]
 fn SettingsContent() -> impl IntoView {
     // Board resources — populate sidebar BOARDS/STARRED sections
-    let boards = Resource::new(|| (), |_| async { list_boards_with_meta().await });
-    let starred = Resource::new(|| (), |_| async { list_starred_boards().await });
+    let boards = Resource::new_blocking(|| (), |_| async { list_boards_with_meta().await });
+    let starred = Resource::new_blocking(|| (), |_| async { list_starred_boards().await });
 
     // Star toggle action
     let star_action = ServerAction::<ToggleStarBoard>::new();
